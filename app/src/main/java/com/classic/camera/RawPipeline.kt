@@ -3,6 +3,7 @@ package com.classic.camera
 import android.graphics.Bitmap
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
+import android.opengl.GLUtils
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -77,6 +78,8 @@ class RawPipeline : GLSurfaceView.Renderer {
         var uOrientation = 0; var uMirror = 0
         // refine pass2 专用
         var uRGBATex = 0; var uTexSize = 0
+        // LUT
+        var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0
 
         fun lookupBayer() {
             aPos = GLES30.glGetAttribLocation(id, "aPos")
@@ -91,6 +94,7 @@ class RawPipeline : GLSurfaceView.Renderer {
             uCFAType = GLES30.glGetUniformLocation(id, "uCFAType")
             uOrientation = GLES30.glGetUniformLocation(id, "uOrientation")
             uMirror = GLES30.glGetUniformLocation(id, "uMirror")
+            lookupLut()
         }
 
         fun lookupRefine() {
@@ -102,6 +106,13 @@ class RawPipeline : GLSurfaceView.Renderer {
             uOrientation = GLES30.glGetUniformLocation(id, "uOrientation")
             uMirror = GLES30.glGetUniformLocation(id, "uMirror")
             uCCM = GLES30.glGetUniformLocation(id, "uCCM")
+            lookupLut()
+        }
+
+        fun lookupLut() {
+            uLutTex = GLES30.glGetUniformLocation(id, "uLutTexture")
+            uLutSizeLoc = GLES30.glGetUniformLocation(id, "uLutSize")
+            uEnableLut = GLES30.glGetUniformLocation(id, "uEnableLut")
         }
     }
 
@@ -114,6 +125,11 @@ class RawPipeline : GLSurfaceView.Renderer {
     private var texId = 0
     private var drawCount = 0
     private var lastDrawLog = 0L
+
+    // ---- LUT 滤镜 ----
+    @Volatile var lutFloatArray: FloatArray? = null
+    private var lutTextureId = 0
+    private var lutEnabled = false
 
     // ---- 离屏渲染 ----
     private var captureFbo = 0
@@ -150,11 +166,11 @@ class RawPipeline : GLSurfaceView.Renderer {
         texAllocated = false; texW = 0; texH = 0
         activeProg = 0
 
-        // 编译所有着色器程序
-        progBilinear = createProgram(VS, FS_BILINEAR)
-        progHA = createProgram(VS, FS_HA)
-        progMHC = createProgram(VS, FS_MHC)
-        progRefine = createProgram(VS, FS_REFINE)
+        // 编译所有着色器程序（最终输出 shader 注入 LUT）
+        progBilinear = createProgram(VS, injectLUT(FS_BILINEAR))
+        progHA = createProgram(VS, injectLUT(FS_HA))
+        progMHC = createProgram(VS, injectLUT(FS_MHC))
+        progRefine = createProgram(VS, injectLUT(FS_REFINE))
         progMHC_Linear = createProgram(VS, FS_MHC_LINEAR)
 
         uniBilinear = ProgUniforms(progBilinear).also { it.lookupBayer() }
@@ -173,6 +189,25 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+
+        // LUT 纹理
+        val lutTexs = IntArray(1)
+        GLES30.glGenTextures(1, lutTexs, 0)
+        lutTextureId = lutTexs[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lutTextureId)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        lutEnabled = false
+        // 表面重建后恢复 LUT 数据
+        val existingLut = lutFloatArray
+        if (existingLut != null) {
+            val bitmap = LutUtils.createLutBitmap(existingLut)
+            GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, bitmap, 0)
+            bitmap.recycle()
+            lutEnabled = true
+        }
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -302,10 +337,21 @@ class RawPipeline : GLSurfaceView.Renderer {
         drawBayer(progBilinear, uniBilinear)
     }
 
+    /** 绑定 LUT 纹理并设置 uniform。在 useProgram + setBayerUniforms 之后调用。 */
+    private fun bindLut(u: ProgUniforms) {
+        if (lutTextureId == 0) return
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lutTextureId)
+        GLES30.glUniform1i(u.uLutTex, 1)
+        GLES30.glUniform1f(u.uLutSizeLoc, 33.0f)
+        GLES30.glUniform1i(u.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
+    }
+
     private fun drawBayer(prog: Int, u: ProgUniforms) {
         useProgram(prog)
         val (ax, ay) = aspectScale()
         setBayerUniforms(u, ax, ay)
+        bindLut(u)
         drawQuad(u)
     }
 
@@ -427,6 +473,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         }
         useProgram(prog)
         setBayerUniforms(u, 1f, 1f)
+        bindLut(u)
         drawQuad(u)
 
         return readCaptureBitmap(outW, outH)
@@ -458,6 +505,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1i(uniRefine.uMirror, 0)
         GLES30.glUniform2f(uniRefine.uAspectScale, 1f, 1f)
         GLES30.glUniformMatrix3fv(uniRefine.uCCM, 1, false, ccm, 0)
+        bindLut(uniRefine)
         drawQuad(uniRefine)
 
         return readCaptureBitmap(outW, outH)
@@ -496,6 +544,18 @@ class RawPipeline : GLSurfaceView.Renderer {
             if (lastViewportW > 0 && lastViewportH > 0) {
                 GLES30.glViewport(0, 0, lastViewportW, lastViewportH)
             }
+        }
+    }
+
+    /** 设置 LUT 数据（GL 线程中调用）。null = 关闭滤镜。 */
+    fun setLut(data: FloatArray?) {
+        lutFloatArray = data
+        lutEnabled = data != null
+        if (data != null && lutTextureId != 0) {
+            val bitmap = LutUtils.createLutBitmap(data)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lutTextureId)
+            GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, bitmap, 0)
+            bitmap.recycle()
         }
     }
 
@@ -539,6 +599,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         if (iterTex != 0) { GLES30.glDeleteTextures(1, intArrayOf(iterTex), 0); iterTex = 0 }
         if (iterFbo != 0) { GLES30.glDeleteFramebuffers(1, intArrayOf(iterFbo), 0); iterFbo = 0 }
         if (texId != 0) { GLES30.glDeleteTextures(1, intArrayOf(texId), 0); texId = 0 }
+        if (lutTextureId != 0) { GLES30.glDeleteTextures(1, intArrayOf(lutTextureId), 0); lutTextureId = 0 }
         if (progBilinear != 0) { GLES30.glDeleteProgram(progBilinear); progBilinear = 0 }
         if (progHA != 0) { GLES30.glDeleteProgram(progHA); progHA = 0 }
         if (progMHC != 0) { GLES30.glDeleteProgram(progMHC); progMHC = 0 }
@@ -598,6 +659,44 @@ class RawPipeline : GLSurfaceView.Renderer {
     }
 
     // ====================== 着色器 ======================
+
+    private val LUT_GLSL = """
+uniform sampler2D uLutTexture;
+uniform float uLutSize;
+uniform bool uEnableLut;
+
+vec3 applyLUT(vec3 color) {
+    vec3 lutCoord = color * (uLutSize - 1.0);
+    float blueSlice = floor(lutCoord.b);
+    float blueOffset = lutCoord.b - blueSlice;
+    float rCoord1 = (lutCoord.r + blueSlice * uLutSize + 0.5) / (uLutSize * uLutSize);
+    float rCoord2 = (lutCoord.r + min(blueSlice + 1.0, uLutSize - 1.0) * uLutSize + 0.5) / (uLutSize * uLutSize);
+    float gCoord = (lutCoord.g + 0.5) / uLutSize;
+    vec3 lutColor1 = texture(uLutTexture, vec2(rCoord1, gCoord)).rgb;
+    vec3 lutColor2 = texture(uLutTexture, vec2(rCoord2, gCoord)).rgb;
+    return mix(lutColor1, lutColor2, blueOffset);
+}
+
+vec3 applyLutWithProtection(vec3 originalRgb) {
+    vec3 filteredRgb = applyLUT(originalRgb);
+    float luminance = dot(originalRgb, vec3(0.299, 0.587, 0.114));
+    float shadowStrength = mix(0.3, 1.0, smoothstep(0.0, 0.15, luminance));
+    float highlightStrength = mix(1.0, 0.4, smoothstep(0.85, 1.0, luminance));
+    return mix(originalRgb, filteredRgb, shadowStrength * highlightStrength);
+}
+""".trimIndent()
+
+    /** 往 Fragment Shader 中注入 LUT uniform/函数 + 在输出前插入 LUT 应用。 */
+    private fun injectLUT(fs: String): String {
+        val withUniforms = fs.replace(
+            "out vec4 frag;",
+            "out vec4 frag;\n$LUT_GLSL"
+        )
+        return withUniforms.replace(
+            "frag = vec4(rgb, 1.0);",
+            "if (uEnableLut) { rgb = applyLutWithProtection(rgb); }\n            frag = vec4(rgb, 1.0);"
+        )
+    }
 
     private val VS = """
         #version 300 es

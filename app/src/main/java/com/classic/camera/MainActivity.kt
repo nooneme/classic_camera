@@ -3,6 +3,7 @@ package com.classic.camera
 import android.Manifest
 import android.app.AlertDialog
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -28,6 +29,7 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -41,6 +43,7 @@ class MainActivity : AppCompatActivity() {
     // UI 组件
     private lateinit var glSurfaceView: GLSurfaceView
     private lateinit var btnShutter: ImageButton
+    private lateinit var btnFilter: ImageButton
     private lateinit var btnSettings: ImageButton
     private lateinit var lensButtonBar: LinearLayout
 
@@ -69,6 +72,28 @@ class MainActivity : AppCompatActivity() {
     private var captureVibRunning = false
     private val captureVibHandler = Handler(Looper.getMainLooper())
 
+    /** 当前滤镜路径（空串=无滤镜） */
+    private var currentFilterPath: String = ""
+
+    /** 滤镜选择结果接收器 */
+    private val filterLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode != RESULT_OK) return@registerForActivityResult
+        val path = result.data?.getStringExtra("filter_path") ?: ""
+        currentFilterPath = path
+        // 先在主线程加载 .cube 文件（避免 GL 线程做 I/O）
+        val lut = if (path.isNotEmpty()) LutUtils.loadCubeFile(java.io.File(path)) else null
+        glSurfaceView.queueEvent {
+            pipeline?.setLut(lut)
+            if (lut != null) {
+                Log.d(LOG_TAG, "滤镜已应用: $path")
+            } else if (path.isNotEmpty()) {
+                Log.w(LOG_TAG, "滤镜文件加载失败: $path")
+            }
+            // 强制刷新画面
+            glSurfaceView.requestRender()
+        }
+    }
+
     // 已探测的镜头列表与当前选中
     private var lensList: List<LensInfo> = emptyList()
     private var selectedLens: LensInfo? = null
@@ -87,6 +112,7 @@ class MainActivity : AppCompatActivity() {
 
         glSurfaceView = findViewById(R.id.glSurfaceView)
         btnShutter = findViewById(R.id.btnShutter)
+        btnFilter = findViewById(R.id.btnFilter)
         btnSettings = findViewById(R.id.btnSettings)
         lensButtonBar = findViewById(R.id.lensButtonBar)
 
@@ -100,6 +126,8 @@ class MainActivity : AppCompatActivity() {
         glSurfaceView.setEGLContextClientVersion(3)
         // 需要 R16F 纹理 / half float，默认属性够，但显式 RGB888 默认色深
         pipeline = RawPipeline()
+        pipeline?.demosaicMode = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getInt("demosaic_mode", RawPipeline.DEMOSAIC_BILINEAR)
         glSurfaceView.setRenderer(pipeline)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
 
@@ -115,6 +143,14 @@ class MainActivity : AppCompatActivity() {
             enterCameraUI(cached)
         } else {
             ensurePermission { startDetection() }
+        }
+
+        // 滤镜按钮
+        btnFilter.setOnClickListener {
+            val intent = Intent(this, FilterActivity::class.java).apply {
+                putExtra("current_filter", currentFilterPath)
+            }
+            filterLauncher.launch(intent)
         }
 
         // 设置按钮
@@ -267,10 +303,11 @@ class MainActivity : AppCompatActivity() {
     /** SharedPreferences 文件名 */
     private val PREFS_NAME = "camera_settings"
 
-    /** 显示设置弹窗（目前只有 DNG 开关）。 */
+    /** 显示设置弹窗。 */
     private fun showSettingsDialog() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val saveDng = prefs.getBoolean("save_dng", true)
+        val savedDemosaic = prefs.getInt("demosaic_mode", RawPipeline.DEMOSAIC_BILINEAR)
 
         val switchDng = Switch(this).apply {
             isChecked = saveDng
@@ -279,12 +316,60 @@ class MainActivity : AppCompatActivity() {
             setPadding(48, 24, 48, 24)
         }
 
+        val demosaicNames = arrayOf("双线性 (快速)", "Hamilton-Adams", "Malvar-He-Cutler", "迭代优化式")
+        val demosaicValues = intArrayOf(
+            RawPipeline.DEMOSAIC_BILINEAR,
+            RawPipeline.DEMOSAIC_HA,
+            RawPipeline.DEMOSAIC_MHC,
+            RawPipeline.DEMOSAIC_ITERATIVE
+        )
+        val initialIdx = demosaicValues.indexOf(savedDemosaic).coerceAtLeast(0)
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 16, 48, 16)
+        }
+        layout.addView(switchDng)
+
+        val modeLabel = TextView(this).apply {
+            text = "去马赛克算法:"
+            textSize = 14f
+            setPadding(0, 24, 0, 8)
+        }
+        layout.addView(modeLabel)
+
+        val radioGroup = object : LinearLayout(this) {
+            var selectedValue = savedDemosaic
+        }.also { group ->
+            group.orientation = LinearLayout.VERTICAL
+            for (i in demosaicNames.indices) {
+                val rb = android.widget.RadioButton(this).apply {
+                    text = demosaicNames[i]
+                    textSize = 14f
+                    isChecked = i == initialIdx
+                    setPadding(24, 6, 0, 6)
+                    setOnClickListener {
+                        for (j in 0 until group.childCount) {
+                            (group.getChildAt(j) as? android.widget.RadioButton)?.isChecked = j == i
+                        }
+                        group.selectedValue = demosaicValues[i]
+                    }
+                }
+                group.addView(rb)
+            }
+        }
+        layout.addView(radioGroup)
+
         AlertDialog.Builder(this)
-            .setView(switchDng)
+            .setView(layout)
             .setPositiveButton("完成") { _, _ ->
                 val enabled = switchDng.isChecked
                 prefs.edit().putBoolean("save_dng", enabled).apply()
                 cameraController?.saveDng = enabled
+
+                val mode = radioGroup.selectedValue
+                prefs.edit().putInt("demosaic_mode", mode).apply()
+                pipeline?.demosaicMode = mode
             }
             .show()
     }
