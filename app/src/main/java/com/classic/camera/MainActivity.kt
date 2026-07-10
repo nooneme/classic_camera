@@ -126,8 +126,6 @@ class MainActivity : AppCompatActivity() {
         glSurfaceView.setEGLContextClientVersion(3)
         // 需要 R16F 纹理 / half float，默认属性够，但显式 RGB888 默认色深
         pipeline = RawPipeline()
-        pipeline?.demosaicMode = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getInt("demosaic_mode", RawPipeline.DEMOSAIC_BILINEAR)
         glSurfaceView.setRenderer(pipeline)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
 
@@ -307,7 +305,6 @@ class MainActivity : AppCompatActivity() {
     private fun showSettingsDialog() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val saveDng = prefs.getBoolean("save_dng", true)
-        val savedDemosaic = prefs.getInt("demosaic_mode", RawPipeline.DEMOSAIC_BILINEAR)
 
         val switchDng = Switch(this).apply {
             isChecked = saveDng
@@ -316,49 +313,11 @@ class MainActivity : AppCompatActivity() {
             setPadding(48, 24, 48, 24)
         }
 
-        val demosaicNames = arrayOf("双线性 (快速)", "Hamilton-Adams", "Malvar-He-Cutler", "迭代优化式")
-        val demosaicValues = intArrayOf(
-            RawPipeline.DEMOSAIC_BILINEAR,
-            RawPipeline.DEMOSAIC_HA,
-            RawPipeline.DEMOSAIC_MHC,
-            RawPipeline.DEMOSAIC_ITERATIVE
-        )
-        val initialIdx = demosaicValues.indexOf(savedDemosaic).coerceAtLeast(0)
-
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 16, 48, 16)
         }
         layout.addView(switchDng)
-
-        val modeLabel = TextView(this).apply {
-            text = "去马赛克算法:"
-            textSize = 14f
-            setPadding(0, 24, 0, 8)
-        }
-        layout.addView(modeLabel)
-
-        val radioGroup = object : LinearLayout(this) {
-            var selectedValue = savedDemosaic
-        }.also { group ->
-            group.orientation = LinearLayout.VERTICAL
-            for (i in demosaicNames.indices) {
-                val rb = android.widget.RadioButton(this).apply {
-                    text = demosaicNames[i]
-                    textSize = 14f
-                    isChecked = i == initialIdx
-                    setPadding(24, 6, 0, 6)
-                    setOnClickListener {
-                        for (j in 0 until group.childCount) {
-                            (group.getChildAt(j) as? android.widget.RadioButton)?.isChecked = j == i
-                        }
-                        group.selectedValue = demosaicValues[i]
-                    }
-                }
-                group.addView(rb)
-            }
-        }
-        layout.addView(radioGroup)
 
         AlertDialog.Builder(this)
             .setView(layout)
@@ -366,10 +325,6 @@ class MainActivity : AppCompatActivity() {
                 val enabled = switchDng.isChecked
                 prefs.edit().putBoolean("save_dng", enabled).apply()
                 cameraController?.saveDng = enabled
-
-                val mode = radioGroup.selectedValue
-                prefs.edit().putInt("demosaic_mode", mode).apply()
-                pipeline?.demosaicMode = mode
             }
             .show()
     }
