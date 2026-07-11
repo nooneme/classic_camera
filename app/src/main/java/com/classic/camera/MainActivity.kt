@@ -157,21 +157,85 @@ class MainActivity : AppCompatActivity() {
         // 快门（任何阶段无权限即请求）
         btnShutter.setOnClickListener {
             ensurePermission {
-                if (cameraController == null || selectedLens == null) {
+                if (cameraController == null || selectedLens == null || pipeline == null) {
                     Toast.makeText(this, "相机未就绪", Toast.LENGTH_SHORT).show()
                 } else {
-                    // 按下大震 + 处理中持续小震
                     startCaptureVibration()
-                    cameraController?.capture { dngName, jpgName, dynamic ->
+                    val lens = selectedLens ?: return@ensurePermission
+                    val pipe = pipeline ?: return@ensurePermission
+
+                    cameraController?.startMultiCapture { mergedBayer, w, h, dngImage ->
                         stopCaptureVibration()
+
+                        // 用当前镜头参数渲染合并后的 Bayer
+                        val bl = parseBlackLevel(lens.blackLevelPattern)
+                        val wl = lens.whiteLevel.toFloat()
+                        val wbGain = floatArrayOf(1f, 1f, 1f)
+                        val ccm = lens.forwardMatrix1?.let {
+                            val parsed = parseColorMatrix(it)
+                            if (parsed.all { v -> v == 0f }) null
+                            else mergeForwardMatrixToSRGB(parsed)
+                        } ?: floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)
+                        val cfaType = lens.colorFilterArrangement
+
+                        val latch = CountDownLatch(1)
+                        var bitmap: Bitmap? = null
+                        glSurfaceView.queueEvent {
+                            try {
+                                bitmap = pipe.renderCaptureToBitmap(
+                                    mergedBayer, w, h,
+                                    bl[0], bl[1], bl[2], wl,
+                                    wbGain[0], wbGain[1], wbGain[2],
+                                    ccm, cfaType
+                                )
+                            } catch (e: Exception) {
+                                Log.e(LOG_TAG, "multiFrame GPU render failed", e)
+                            }
+                            latch.countDown()
+                        }
+                        if (!latch.await(10, TimeUnit.SECONDS)) {
+                            Log.e(LOG_TAG, "multiFrame GPU render timeout")
+                        }
+
+                        // DNG
+                        var dngName = ""
+                        if (dngImage != null && getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("save_dng", true)) {
+                            val dngLatch = CountDownLatch(1)
+                            cameraController?.saveDngImage(dngImage) { name ->
+                                dngName = name; dngLatch.countDown()
+                            }
+                            if (!dngLatch.await(5, TimeUnit.SECONDS)) {
+                                Log.e(LOG_TAG, "DNG save timeout")
+                            }
+                            dngImage.close()
+                        }
+
+                        // JPEG
+                        var jpgName = ""
+                        val finalBitmap = bitmap
+                        if (finalBitmap != null) {
+                            val iso = (manualController?.iso ?: 100)
+                            val exposureNs = (manualController?.exposureTimeNs ?: ManualController.DEFAULT_EXPOSURE_NS)
+                            val aperture = lens.aperture
+                            val actualFl = lens.focalLength
+                            val equivFl = if (lens.sensorWidthMm > 0f && lens.sensorHeightMm > 0f) {
+                                val diag = sqrt((lens.sensorWidthMm * lens.sensorWidthMm + lens.sensorHeightMm * lens.sensorHeightMm).toDouble())
+                                val cropFactor = 43.27 / diag
+                                (lens.focalLength * cropFactor).roundToInt()
+                            } else null
+
+                            jpgName = saveBitmapAsJpeg(this@MainActivity, finalBitmap,
+                                "IMG_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())}.jpg",
+                                iso, exposureNs, aperture, actualFl, equivFl)
+                        }
+
                         runOnUiThread {
                             val msg = if (dngName.isNotEmpty())
-                                "已保存 $dngName 和 $jpgName → Pictures/gufa/"
+                                "多帧合成: $dngName 和 $jpgName → Pictures/gufa/"
                             else
-                                "已保存 $jpgName → Pictures/gufa/"
-                            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                                "多帧合成: $jpgName → Pictures/gufa/"
+                            Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
                         }
-                        Log.d(LOG_TAG, "动态字段: $dynamic")
                     }
                 }
             }

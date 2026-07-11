@@ -19,6 +19,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.util.Log
 import android.hardware.camera2.params.OutputConfiguration
@@ -76,6 +77,22 @@ class CameraController(
     private var captureCallback: ((dngName: String, jpgName: String, dynamic: Map<String, String>) -> Unit)? = null
     private var captureCharacteristics: CameraCharacteristics? = null
 
+    // ---- 多帧合成相关 ----
+    /** 多帧合成帧数（默认 1 = 单帧） */
+    var multiFrameCount: Int = 4
+
+    /** 是否正在进行多帧连拍 */
+    private var multiFrameCapturing = false
+
+    /** 多帧累积的 Bayer 数据 */
+    private val multiFrameBuffers = mutableListOf<ShortArray>()
+
+    /** 多帧参考帧的 Image（用于保存 DNG） */
+    private var multiFrameRefImage: Image? = null
+
+    /** 多帧完成回调 */
+    private var multiFrameCallback: ((mergedBayer: ShortArray, w: Int, h: Int, dngImage: Image?) -> Unit)? = null
+
     /** 设置开关：拍照时是否保存 DNG（由设置界面控制）。 */
     var saveDng: Boolean = true
 
@@ -132,6 +149,9 @@ class CameraController(
             pendingResult = null
             captureLatch = null
             captureCallback = null
+            multiFrameRefImage?.close(); multiFrameRefImage = null
+            multiFrameBuffers.clear()
+            multiFrameCapturing = false
         } catch (e: Exception) {
             Log.e(LOG_TAG, "teardown err", e)
         }
@@ -154,7 +174,24 @@ class CameraController(
         rawReader?.setOnImageAvailableListener({ reader ->
             val img = reader.acquireLatestImage()
             if (img == null) return@setOnImageAvailableListener
-            // 拍照模式（captureLatch 有值）：攒图存 DNG
+            // 多帧连拍模式：累积帧
+            if (multiFrameCapturing) {
+                val bayer = extractRawShorts(img)
+                // 第一帧保留 Image 用于 DNG
+                if (multiFrameBuffers.isEmpty()) {
+                    multiFrameRefImage?.close()
+                    multiFrameRefImage = img
+                }
+                multiFrameBuffers.add(bayer)
+                Log.d(LOG_TAG, "multiFrame: captured ${multiFrameBuffers.size}/$multiFrameCount")
+                if (multiFrameBuffers.size >= multiFrameCount) {
+                    multiFrameCapturing = false
+                    processMultiFrame()
+                }
+                if (multiFrameBuffers.size > 1) img.close()
+                return@setOnImageAvailableListener
+            }
+            // 单帧拍照模式（captureLatch 有值）：攒图存 DNG
             if (captureLatch != null) {
                 pendingImage?.close()
                 pendingImage = img
@@ -496,6 +533,61 @@ class CameraController(
         captureLatch = CountDownLatch(1)
     }
 
+    /** 多帧连拍：累积 multiFrameCount 帧后做对齐+融合。 */
+    fun startMultiCapture(callback: (mergedBayer: ShortArray, w: Int, h: Int, dngImage: Image?) -> Unit) {
+        if (session == null || multiFrameCapturing) { Log.e(LOG_TAG, "multiFrame: session null or already capturing"); return }
+        val lens = currentLens ?: return
+        multiFrameBuffers.clear()
+        multiFrameRefImage?.close(); multiFrameRefImage = null
+        multiFrameCallback = callback
+        // 快照当前动态参数（与预览一致）
+        captureSnapshotBlackLevel = lastDynamicBlackLevel?.copyOf()
+            ?: parseBlackLevel(lens.blackLevelPattern)
+            ?: floatArrayOf(0f, 0f, 0f)
+        captureSnapshotWhiteLevel = lastDynamicWhiteLevel
+            ?: lens.whiteLevel.toFloat()
+        captureSnapshotWB = lastWBGain.copyOf()
+        multiFrameCapturing = true
+        Log.d(LOG_TAG, "multiFrame: starting capture of $multiFrameCount frames")
+    }
+
+    /** 多帧全部到齐后，执行 JNI 对齐融合，然后回调。 */
+    private fun processMultiFrame() {
+        val buffers = multiFrameBuffers.toList()
+        val refImage = multiFrameRefImage
+        val w = rawReader?.width ?: return
+        val h = rawReader?.height ?: return
+        val nf = buffers.size
+        val cb = multiFrameCallback ?: return
+        val mainHandler = Handler(Looper.getMainLooper())
+
+        multiFrameCallback = null
+        multiFrameRefImage = null
+
+        bgHandler.post {
+            try {
+                val numTx = (w + 16 - 1) / 16
+                val numTy = (h + 16 - 1) / 16
+
+                val frameArr = buffers.toTypedArray()
+                val offsets = AlignMergeEngine.alignFrames(frameArr, w, h, nf)
+                Log.d(LOG_TAG, "multiFrame: align done (${offsets.size} ints)")
+
+                val merged = AlignMergeEngine.mergeFrames(frameArr, offsets, w, h, nf, numTx, numTy)
+                Log.d(LOG_TAG, "multiFrame: merge done (${merged.size} shorts)")
+
+                mainHandler.post {
+                    cb(merged, w, h, refImage)
+                }
+            } catch (e: Exception) {
+                Log.e(LOG_TAG, "multiFrame processing failed", e)
+                mainHandler.post {
+                    cb(buffers[0], w, h, refImage)
+                }
+            }
+        }
+    }
+
     /** Image 到齐后写 DNG/JPG（只等 Image，不再等待独立的 CaptureResult）。 */
     private fun tryWriteDng() {
         val img = pendingImage ?: return
@@ -656,6 +748,17 @@ class CameraController(
             "iso=${result.get(CaptureResult.SENSOR_SENSITIVITY)} " +
             "wb=${result.get(CaptureResult.COLOR_CORRECTION_GAINS)}")
         return map
+    }
+
+    /** 保存单帧 Image 为 DNG（供多帧合成使用参考帧）。 */
+    fun saveDngImage(image: Image, callback: (String) -> Unit) {
+        val characteristics = captureCharacteristics ?: return
+        val result = lastRepeatingResult
+        if (result == null) { callback(""); return }
+        bgHandler.post {
+            val name = writeDng(characteristics, result, image, currentLens)
+            callback(name)
+        }
     }
 
     /** 释放（生命周期用）。作废当前轮，并回收资源。 */
