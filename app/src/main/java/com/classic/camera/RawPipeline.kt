@@ -13,7 +13,7 @@ import javax.microedition.khronos.opengles.GL10
 class RawPipeline : GLSurfaceView.Renderer {
 
     companion object {
-        private const val GL_R16 = 0x822A
+        private const val GL_R16 = 0x822A  // R16F, used with GL_FLOAT
     }
 
     // ---- 供外部更新参数 ----
@@ -23,6 +23,8 @@ class RawPipeline : GLSurfaceView.Renderer {
         private set
 
     @Volatile var rawShorts: ShortArray? = null
+    /** ByteBuffer 路径（预览用，跳过 ShortArray 中间分配）。position=0, limit=w*h*2。 */
+    @Volatile var rawBuffer: java.nio.ByteBuffer? = null
     @Volatile var rawW: Int = 0
     @Volatile var rawH: Int = 0
     var blackLevelR = 0.0f
@@ -42,8 +44,6 @@ class RawPipeline : GLSurfaceView.Renderer {
 
     // ---- 着色器程序 ----
     private var progBilinear = 0
-    private var activeProg = 0
-
     // ---- Uniform 缓存（每程序独立） ----
     private class ProgUniforms(val id: Int) {
         var aPos = 0; var aTexCoord = 0
@@ -89,6 +89,9 @@ class RawPipeline : GLSurfaceView.Renderer {
     private var lutTextureId = 0
     private var lutEnabled = false
 
+    // ---- GL 初始化回调（GPU 多帧融合等需 context 就绪后初始化） ----
+    var onGluReady: (() -> Unit)? = null
+
     // ---- 离屏渲染 ----
     private var captureFbo = 0
     private var captureTex = 0
@@ -115,7 +118,6 @@ class RawPipeline : GLSurfaceView.Renderer {
         android.util.Log.d("ClassicCamera", "GL onSurfaceCreated")
         captureFbo = 0; captureTex = 0; captureTexW = 0; captureTexH = 0
         texAllocated = false; texW = 0; texH = 0
-        activeProg = 0
 
         progBilinear = createProgram(VS, buildBayerShader(BILINEAR_BODY))
         uniBilinear = ProgUniforms(progBilinear).also { it.lookupBayer() }
@@ -149,6 +151,8 @@ class RawPipeline : GLSurfaceView.Renderer {
             bitmap.recycle()
             lutEnabled = true
         }
+        // GPU 多帧管线初始化（context 已就绪）
+        onGluReady?.invoke()
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -157,7 +161,21 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glViewport(0, 0, width, height)
     }
 
-    /** 上传 RAW 数据到 GL_R16 纹理，返回是否成功。 */
+    /** 上传 DirectByteBuffer 到 GL_R16 纹理（预览路径，ByteBuffer 已是 Direct 且 position=0）。 */
+    private fun uploadRawBuffer(buf: java.nio.ByteBuffer): Boolean {
+        if (rawW <= 0 || rawH <= 0) return false
+        if (buf.remaining() < rawW * rawH * 2) return false
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texId)
+        if (texAllocated && texW == rawW && texH == rawH) {
+            GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, rawW, rawH, GLES30.GL_RED, GLES30.GL_UNSIGNED_SHORT, buf)
+        } else {
+            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GL_R16, rawW, rawH, 0, GLES30.GL_RED, GLES30.GL_UNSIGNED_SHORT, buf)
+            texAllocated = true; texW = rawW; texH = rawH
+        }
+        return true
+    }
+
+    /** 上传 ShortArray 到 GL_R16 纹理（拍照路径，内部通过 rawDirectBuf 中转）。 */
     private fun uploadRaw(data: ShortArray): Boolean {
         if (rawW <= 0 || rawH <= 0) return false
         val shortCount = rawW * rawH
@@ -168,18 +186,10 @@ class RawPipeline : GLSurfaceView.Renderer {
         val needed = shortCount * 2
         val bb = if (rawDirectBuf == null || rawDirectBuf!!.capacity() < needed)
             ByteBuffer.allocateDirect(needed).order(ByteOrder.nativeOrder()).also { rawDirectBuf = it }
-        else rawDirectBuf!!
-        bb.clear()
+        else { rawDirectBuf!!.clear(); rawDirectBuf!!.limit(needed); rawDirectBuf!! }
         bb.asShortBuffer().put(data)
         bb.position(0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texId)
-        if (texAllocated && texW == rawW && texH == rawH) {
-            GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, rawW, rawH, GLES30.GL_RED, GLES30.GL_UNSIGNED_SHORT, bb)
-        } else {
-            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GL_R16, rawW, rawH, 0, GLES30.GL_RED, GLES30.GL_UNSIGNED_SHORT, bb)
-            texAllocated = true; texW = rawW; texH = rawH
-        }
-        return true
+        return uploadRawBuffer(bb)
     }
 
     /** 设置 Bayer shader 的公共 uniform。 */
@@ -215,10 +225,7 @@ class RawPipeline : GLSurfaceView.Renderer {
     }
 
     private fun useProgram(prog: Int) {
-        if (activeProg != prog) {
-            GLES30.glUseProgram(prog)
-            activeProg = prog
-        }
+        GLES30.glUseProgram(prog)
     }
 
     /** 计算宽高比缩放值。 */
@@ -237,16 +244,32 @@ class RawPipeline : GLSurfaceView.Renderer {
         val now = System.nanoTime()
         if (now - lastDrawLog > 1_000_000_000L) {
             android.util.Log.d("ClassicCamera",
-                "GL draw rate=${drawCount}/s rawIsNull=${rawShorts==null} w=$rawW h=$rawH")
+                "GL draw rate=${drawCount}/s buf=${rawBuffer != null} shorts=${rawShorts != null} w=$rawW h=$rawH")
             drawCount = 0; lastDrawLog = now
         }
+
+        // 无论上层谁修改了 Viewport，每帧渲染前强制恢复到屏幕尺寸
+        if (lastViewportW > 0 && lastViewportH > 0) {
+            GLES30.glViewport(0, 0, lastViewportW, lastViewportH)
+        }
+
+        // 清除可能被上层残留的 GL 错误
+        while (GLES30.glGetError() != GLES30.GL_NO_ERROR) {}
 
         GLES30.glClearColor(0f, 0f, 0f, 1f)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
 
-        val data = rawShorts ?: run { drawTestPattern(); return }
-        if (rawW <= 0 || rawH <= 0) return
-        if (!uploadRaw(data)) return
+        if (rawW <= 0 || rawH <= 0) { drawTestPattern(); return }
+
+        // 优先 ByteBuffer 路径（跳过 ShortArray 中间分配）
+        val buf = rawBuffer
+        if (buf != null) {
+            buf.position(0)
+            if (!uploadRawBuffer(buf)) { drawTestPattern(); return }
+        } else {
+            val data = rawShorts ?: run { drawTestPattern(); return }
+            if (!uploadRaw(data)) { drawTestPattern(); return }
+        }
 
         // 预览固定双线性（快速），设置中选择的算法只影响拍照 JPG
         drawBayer(progBilinear, uniBilinear)
@@ -309,7 +332,6 @@ class RawPipeline : GLSurfaceView.Renderer {
     ): Bitmap? {
         if (w <= 0 || h <= 0 || bayer.size < w * h) return null
 
-        // 存当前参数供渲染使用
         this.blackLevelR = blackLevelR; this.blackLevelG = blackLevelG; this.blackLevelB = blackLevelB
         this.whiteLevel = whiteLevel
         this.wbR = wbR; this.wbG = wbG; this.wbB = wbB
@@ -321,18 +343,15 @@ class RawPipeline : GLSurfaceView.Renderer {
         val outW = if (rotated) h else w
         val outH = if (rotated) w else h
 
-        try {
-            ensureCaptureFbo(outW, outH)
-        } catch (e: Exception) {
-            android.util.Log.e("ClassicCamera", "ensureCaptureFbo failed: ${e.message}", e)
-            return null
-        }
+        try { ensureCaptureFbo(outW, outH) } catch (e: Exception) { return null }
 
-        // 上传 RAW
-        rawW = w; rawH = h
-        if (!uploadRaw(bayer)) return null
+        // 上传 RAW: 用与预览一致的 GL_R16 + GL_UNSIGNED_SHORT，避免 GL_R16F 兼容问题
+        val shortBuf = ByteBuffer.allocateDirect(w * h * 2).order(ByteOrder.nativeOrder())
+        shortBuf.asShortBuffer().put(bayer)
+        shortBuf.position(0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texId)
+        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GL_R16, w, h, 0, GLES30.GL_RED, GLES30.GL_UNSIGNED_SHORT, shortBuf)
 
-        // 固定使用双线性去马赛克
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, captureFbo)
         GLES30.glViewport(0, 0, captureTexW, captureTexH)
         GLES30.glClearColor(0f, 0f, 0f, 1f)
@@ -350,12 +369,18 @@ class RawPipeline : GLSurfaceView.Renderer {
             val bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
             val stripHeight = 512
             val stripBytes = ByteBuffer.allocateDirect(outW * stripHeight * 4).order(ByteOrder.nativeOrder())
+            val tReadStart = System.nanoTime()
+            var totalReadTime = 0L
+            var totalConvertTime = 0L
             for (y in 0 until outH step stripHeight) {
                 val curH = minOf(stripHeight, outH - y)
                 stripBytes.clear()
                 stripBytes.limit(outW * curH * 4)
+                val tGlRead = System.nanoTime()
                 GLES30.glReadPixels(0, y, outW, curH, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, stripBytes)
+                totalReadTime += System.nanoTime() - tGlRead
                 stripBytes.position(0)
+                val tConvert = System.nanoTime()
                 val argbStrip = IntArray(outW * curH)
                 for (sy in 0 until curH) {
                     for (sx in 0 until outW) {
@@ -367,8 +392,28 @@ class RawPipeline : GLSurfaceView.Renderer {
                         argbStrip[destY * outW + sx] = (a shl 24) or (r shl 16) or (g shl 8) or b
                     }
                 }
+                // 日志：当前 strip 包含图像中心行时，输出中间 10 像素 RGBA
+                if (y <= outH / 2 && y + curH > outH / 2) {
+                    val cyInStrip = outH / 2 - y
+                    val cx = outW / 2
+                    val baseIdx = cyInStrip * outW
+                    val startPx = (cx - 5).coerceAtLeast(0)
+                    val endPx = (cx + 5).coerceAtMost(outW)
+                    val rgba = (startPx until endPx).map { i ->
+                        val c = argbStrip[baseIdx + i]
+                        "(%d,%d,%d)".format(c and 0xFF, (c ushr 8) and 0xFF, (c ushr 16) and 0xFF)
+                    }
+                    android.util.Log.d("ClassicCamera", "capture_glReadPixels_middle10: ${rgba.joinToString(",")}")
+                }
+                totalConvertTime += System.nanoTime() - tConvert
                 bitmap.setPixels(argbStrip, 0, outW, 0, outH - y - curH, outW, curH)
             }
+            android.util.Log.d("ClassicCamera", String.format("readCaptureBitmap: glReadPixels=%.1fms convert+setPixels=%.1fms total=%.1fms (strips=%d, stripH=%d)",
+                totalReadTime / 1_000_000.0,
+                totalConvertTime / 1_000_000.0,
+                (System.nanoTime() - tReadStart) / 1_000_000.0,
+                (outH + stripHeight - 1) / stripHeight,
+                stripHeight))
             return bitmap
         } catch (e: Exception) {
             android.util.Log.e("ClassicCamera", "readCaptureBitmap error: ${e.message}", e)

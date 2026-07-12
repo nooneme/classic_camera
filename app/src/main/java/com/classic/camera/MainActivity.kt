@@ -12,6 +12,10 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
 import android.opengl.GLSurfaceView
+import javax.microedition.khronos.egl.EGL10
+import javax.microedition.khronos.egl.EGLConfig
+import javax.microedition.khronos.egl.EGLContext
+import javax.microedition.khronos.egl.EGLDisplay
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -54,6 +58,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvIso: TextView
 
     private var pipeline: RawPipeline? = null
+    private var gpuAlignMerge: GpuAlignMerge? = null
 
     // Camera2 相关
     private lateinit var cameraManager: CameraManager
@@ -122,12 +127,27 @@ class MainActivity : AppCompatActivity() {
         tvShutterSpeed = findViewById(R.id.tvShutterSpeed)
         tvIso = findViewById(R.id.tvIso)
 
-        // GL 上下文：ES3.0，按需渲染
-        glSurfaceView.setEGLContextClientVersion(3)
-        // 需要 R16F 纹理 / half float，默认属性够，但显式 RGB888 默认色深
+        // GL 上下文：仅设置 MAJOR=3，EGL 自动返回设备支持的最高 3.x 版本（S23→ES 3.2）
+        glSurfaceView.setEGLContextFactory(object : GLSurfaceView.EGLContextFactory {
+            override fun createContext(egl: EGL10, display: EGLDisplay, eglConfig: EGLConfig): EGLContext {
+                val attr = intArrayOf(0x3098, 3, 0x3038) // EGL_CONTEXT_CLIENT_VERSION = 3
+                return egl.eglCreateContext(display, eglConfig, EGL10.EGL_NO_CONTEXT, attr)
+            }
+            override fun destroyContext(egl: EGL10, display: EGLDisplay, context: EGLContext) {
+                egl.eglDestroyContext(display, context)
+            }
+        })
         pipeline = RawPipeline()
         glSurfaceView.setRenderer(pipeline)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
+
+        // GPU 多帧融合管线（在 GL context 就绪后的 onSurfaceCreated 中初始化）
+        val gpuAligner = GpuAlignMerge()
+        gpuAlignMerge = gpuAligner
+        pipeline?.onGluReady = {
+            gpuAligner.init()
+            Log.d(LOG_TAG, "GPU multi-frame pipeline ready = ${gpuAligner.isSupported()}")
+        }
 
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
 
@@ -161,80 +181,29 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "相机未就绪", Toast.LENGTH_SHORT).show()
                 } else {
                     startCaptureVibration()
-                    val lens = selectedLens ?: return@ensurePermission
-                    val pipe = pipeline ?: return@ensurePermission
+                    val useMulti = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("multi_frame", true)
 
-                    cameraController?.startMultiCapture { mergedBayer, w, h, dngImage ->
-                        stopCaptureVibration()
-
-                        // 用当前镜头参数渲染合并后的 Bayer
-                        val bl = parseBlackLevel(lens.blackLevelPattern)
-                        val wl = lens.whiteLevel.toFloat()
-                        val wbGain = floatArrayOf(1f, 1f, 1f)
-                        val ccm = lens.forwardMatrix1?.let {
-                            val parsed = parseColorMatrix(it)
-                            if (parsed.all { v -> v == 0f }) null
-                            else mergeForwardMatrixToSRGB(parsed)
-                        } ?: floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)
-                        val cfaType = lens.colorFilterArrangement
-
-                        val latch = CountDownLatch(1)
-                        var bitmap: Bitmap? = null
-                        glSurfaceView.queueEvent {
-                            try {
-                                bitmap = pipe.renderCaptureToBitmap(
-                                    mergedBayer, w, h,
-                                    bl[0], bl[1], bl[2], wl,
-                                    wbGain[0], wbGain[1], wbGain[2],
-                                    ccm, cfaType
-                                )
-                            } catch (e: Exception) {
-                                Log.e(LOG_TAG, "multiFrame GPU render failed", e)
+                    if (useMulti) {
+                        cameraController?.startMultiCapture { dngName, jpgName ->
+                            stopCaptureVibration()
+                            runOnUiThread {
+                                val msg = if (dngName.isNotEmpty())
+                                    "多帧合成: $dngName 和 $jpgName → Pictures/gufa/"
+                                else
+                                    "多帧合成: $jpgName → Pictures/gufa/"
+                                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
                             }
-                            latch.countDown()
                         }
-                        if (!latch.await(10, TimeUnit.SECONDS)) {
-                            Log.e(LOG_TAG, "multiFrame GPU render timeout")
-                        }
-
-                        // DNG
-                        var dngName = ""
-                        if (dngImage != null && getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("save_dng", true)) {
-                            val dngLatch = CountDownLatch(1)
-                            cameraController?.saveDngImage(dngImage) { name ->
-                                dngName = name; dngLatch.countDown()
+                    } else {
+                        cameraController?.capture { dngName, jpgName, _ ->
+                            stopCaptureVibration()
+                            runOnUiThread {
+                                val msg = if (dngName.isNotEmpty())
+                                    "$dngName 和 $jpgName → Pictures/gufa/"
+                                else
+                                    "$jpgName → Pictures/gufa/"
+                                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
                             }
-                            if (!dngLatch.await(5, TimeUnit.SECONDS)) {
-                                Log.e(LOG_TAG, "DNG save timeout")
-                            }
-                            dngImage.close()
-                        }
-
-                        // JPEG
-                        var jpgName = ""
-                        val finalBitmap = bitmap
-                        if (finalBitmap != null) {
-                            val iso = (manualController?.iso ?: 100)
-                            val exposureNs = (manualController?.exposureTimeNs ?: ManualController.DEFAULT_EXPOSURE_NS)
-                            val aperture = lens.aperture
-                            val actualFl = lens.focalLength
-                            val equivFl = if (lens.sensorWidthMm > 0f && lens.sensorHeightMm > 0f) {
-                                val diag = sqrt((lens.sensorWidthMm * lens.sensorWidthMm + lens.sensorHeightMm * lens.sensorHeightMm).toDouble())
-                                val cropFactor = 43.27 / diag
-                                (lens.focalLength * cropFactor).roundToInt()
-                            } else null
-
-                            jpgName = saveBitmapAsJpeg(this@MainActivity, finalBitmap,
-                                "IMG_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())}.jpg",
-                                iso, exposureNs, aperture, actualFl, equivFl)
-                        }
-
-                        runOnUiThread {
-                            val msg = if (dngName.isNotEmpty())
-                                "多帧合成: $dngName 和 $jpgName → Pictures/gufa/"
-                            else
-                                "多帧合成: $jpgName → Pictures/gufa/"
-                            Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
                         }
                     }
                 }
@@ -369,10 +338,18 @@ class MainActivity : AppCompatActivity() {
     private fun showSettingsDialog() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val saveDng = prefs.getBoolean("save_dng", true)
+        val multiFrame = prefs.getBoolean("multi_frame", true)
 
         val switchDng = Switch(this).apply {
             isChecked = saveDng
             text = "同时保存原始 DNG"
+            textSize = 16f
+            setPadding(48, 24, 48, 24)
+        }
+
+        val switchMultiFrame = Switch(this).apply {
+            isChecked = multiFrame
+            text = "多帧融合 (4帧合成)"
             textSize = 16f
             setPadding(48, 24, 48, 24)
         }
@@ -382,13 +359,15 @@ class MainActivity : AppCompatActivity() {
             setPadding(48, 16, 48, 16)
         }
         layout.addView(switchDng)
+        layout.addView(switchMultiFrame)
 
         AlertDialog.Builder(this)
             .setView(layout)
             .setPositiveButton("完成") { _, _ ->
-                val enabled = switchDng.isChecked
-                prefs.edit().putBoolean("save_dng", enabled).apply()
-                cameraController?.saveDng = enabled
+                prefs.edit().putBoolean("save_dng", switchDng.isChecked).apply()
+                prefs.edit().putBoolean("multi_frame", switchMultiFrame.isChecked).apply()
+                cameraController?.saveDng = switchDng.isChecked
+                cameraController?.multiFrameCount = if (switchMultiFrame.isChecked) 4 else 1
             }
             .show()
     }
@@ -534,6 +513,7 @@ class MainActivity : AppCompatActivity() {
             cameraController = it
             it.manualController = manualController  // 注入手动曝光控制器
             it.saveDng = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("save_dng", true)
+            it.multiFrameCount = if (getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("multi_frame", true)) 4 else 1
             // GPU JPEG 处理器：通过 queueEvent 在 GL 线程渲染，CountDownLatch 同步等待
             // 返回 null 则跳过 JPEG 保存
             it.gpuJpegProcessor = { rawShorts, w, h, blR, blG, blB, wl, wbR, wbG, wbB, ccm, cfa ->
@@ -558,12 +538,33 @@ class MainActivity : AppCompatActivity() {
                 }
                 bitmap // may be null → writeJpeg 跳过 JPEG 保存
             }
+            // GPU 多帧融合处理器（在 GL 线程运行，CountDownLatch 同步）
+            val aligner = gpuAlignMerge
+            if (aligner != null) {
+                it.gpuMultiFrameProcessor = { frames, w, h, numTx, numTy ->
+                    val latch = CountDownLatch(1)
+                    var result: ShortArray? = null
+                    var error: Exception? = null
+                    glSurfaceView.queueEvent {
+                        try {
+                            result = aligner.process(frames, w, h, numTx, numTy)
+                        } catch (e: Exception) {
+                            Log.e(LOG_TAG, "GPU multi-frame failed", e)
+                            error = e
+                        }
+                        latch.countDown()
+                    }
+                    latch.await(15, TimeUnit.SECONDS)
+                    if (error != null) throw RuntimeException("GPU multi-frame failed", error)
+                    result!!
+                }
+            }
         }
         // 每帧 RAW 数据回调：更新 pipeline 参数并请求 GL 重绘
-        controller.onRawFrame = { bayer, w, h, wbR, wbG, wbB, blR, blG, blB, wl ->
+        controller.onRawFrame = { buf, w, h, wbR, wbG, wbB, blR, blG, blB, wl ->
             val p = pipeline
             if (p != null) {
-                p.rawShorts = bayer
+                p.rawBuffer = buf
                 p.rawW = w; p.rawH = h
                 p.wbR = wbR; p.wbG = wbG; p.wbB = wbB
                 // 动态黑/白电平（null = 帧级数据尚未到达，保持 applyLensParams 设置的静态值）
@@ -788,6 +789,9 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         cameraController?.close()
         stopBackgroundThread()
+        gpuAlignMerge?.let { aligner ->
+            glSurfaceView.queueEvent { aligner.release() }
+        }
     }
 
     // ---- ColorSpaceTransform / BlackLevelPattern 文本解析（LensInfo 存的 toString） ----

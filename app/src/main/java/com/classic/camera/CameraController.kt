@@ -56,7 +56,8 @@ class CameraController(
 
     // RAW 预览每帧回调（把 Bayer 数据 + 动态 gain/黑电平/白电平 喂给 RawPipeline）
     // blR/blG/blB/wl = null 表示动态数据尚未到达，由接收方保持已有值（如 applyLensParams 设置的静态值）
-    var onRawFrame: ((bayer: ShortArray, w: Int, h: Int, wbR: Float, wbG: Float, wbB: Float,
+    // buf: Image 的 plane.buffer，position=0, limit=w*h*2，直传 GL，不经过 ShortArray
+    var onRawFrame: ((buf: java.nio.ByteBuffer, w: Int, h: Int, wbR: Float, wbG: Float, wbB: Float,
                       blR: Float?, blG: Float?, blB: Float?, wl: Float?) -> Unit)? = null
 
     // GPU JPEG 处理器：通过 queueEvent 在 GL 线程渲染，CountDownLatch 同步等待结果
@@ -90,11 +91,23 @@ class CameraController(
     /** 多帧参考帧的 Image（用于保存 DNG） */
     private var multiFrameRefImage: Image? = null
 
-    /** 多帧完成回调 */
-    private var multiFrameCallback: ((mergedBayer: ShortArray, w: Int, h: Int, dngImage: Image?) -> Unit)? = null
+    /** 多帧完成回调（文件名已定稿，UI 仅展示） */
+    private var multiFrameCallback: ((dngName: String, jpgName: String) -> Unit)? = null
+
+    // ---- 计时诊断 ----
+    private var captureStartNs = 0L
+    private var firstFrameArrivedNs = 0L
+    private var lastFrameArrivedNs = 0L
 
     /** 设置开关：拍照时是否保存 DNG（由设置界面控制）。 */
     var saveDng: Boolean = true
+
+    /** GPU 多帧融合处理器（MainActivity 注入）。必须设置，不再回退 CPU。 */
+    var gpuMultiFrameProcessor: ((
+        frames: Array<ShortArray>,
+        w: Int, h: Int,
+        numTx: Int, numTy: Int
+    ) -> ShortArray)? = null
 
     // ---- 手动曝光控制 ----
     /** 手动曝光控制器（由 MainActivity 注入）。 */
@@ -176,16 +189,30 @@ class CameraController(
             if (img == null) return@setOnImageAvailableListener
             // 多帧连拍模式：累积帧
             if (multiFrameCapturing) {
+                val tFrameArrived = System.nanoTime()
                 val bayer = extractRawShorts(img)
+                logMiddleShorts(LOG_TAG, bayer, img.width, img.height)
+                val tExtracted = System.nanoTime()
                 // 第一帧保留 Image 用于 DNG
                 if (multiFrameBuffers.isEmpty()) {
                     multiFrameRefImage?.close()
                     multiFrameRefImage = img
+                    firstFrameArrivedNs = tFrameArrived
+                    Log.d(LOG_TAG, String.format("multiFrame: frame 1 arrived %.0fms after trigger, extractRawShorts took %.1fms",
+                        (tFrameArrived - captureStartNs) / 1_000_000.0,
+                        (tExtracted - tFrameArrived) / 1_000_000.0))
+                } else {
+                    Log.d(LOG_TAG, String.format("multiFrame: frame %d arrived %.0fms after trigger, extractRawShorts took %.1fms",
+                        multiFrameBuffers.size + 1,
+                        (tFrameArrived - captureStartNs) / 1_000_000.0,
+                        (tExtracted - tFrameArrived) / 1_000_000.0))
                 }
                 multiFrameBuffers.add(bayer)
-                Log.d(LOG_TAG, "multiFrame: captured ${multiFrameBuffers.size}/$multiFrameCount")
                 if (multiFrameBuffers.size >= multiFrameCount) {
                     multiFrameCapturing = false
+                    lastFrameArrivedNs = tFrameArrived
+                    Log.d(LOG_TAG, String.format("multiFrame: all %d frames captured in %.0fms (extractRawShorts total overhead excluded)",
+                        multiFrameCount, (lastFrameArrivedNs - captureStartNs) / 1_000_000.0))
                     processMultiFrame()
                 }
                 if (multiFrameBuffers.size > 1) img.close()
@@ -243,7 +270,24 @@ class CameraController(
         }
     }
 
-    /** 把 RAW Image 的 Bayer 数据 + 白平衡 gain 取出喂给 pipeline。 */
+    /** 双缓冲 DirectByteBuffer，避免 Camera 写入与 GL 读取的 data race。 */
+    private val previewDirectBufs = arrayOfNulls<java.nio.ByteBuffer>(2)
+    private var previewBufIndex = 0
+
+    /** 获取或扩容第 idx 个 DirectByteBuffer。 */
+    private fun getOrCreateDirectBuf(idx: Int, minCapacity: Int): java.nio.ByteBuffer {
+        val existing = previewDirectBufs[idx]
+        if (existing != null && existing.capacity() >= minCapacity) {
+            existing.clear().limit(minCapacity)
+            return existing
+        }
+        val newBuf = java.nio.ByteBuffer.allocateDirect(minCapacity).order(java.nio.ByteOrder.nativeOrder())
+        previewDirectBufs[idx] = newBuf
+        return newBuf
+    }
+
+    /** 把 RAW Image 的 Bayer 数据 + 白平衡 gain 取出喂给 pipeline。
+     *  直接将 Image 的 ByteBuffer 拷贝到持久 DirectByteBuffer，跳过 ShortArray 中间分配。 */
     private fun processRawPreviewFrame(img: Image) {
         val plane = img.planes[0]
         val buf = plane.buffer
@@ -251,59 +295,79 @@ class CameraController(
         val pixelStride = plane.pixelStride
         val w = img.width
         val h = img.height
-        val bayer = ShortArray(w * h)
-        // RAW_SENSOR 的 plane 是连续的 16-bit，通常 rowStride = w*2, pixelStride=2
+        val byteCount = w * h * 2
+
+        // 轮换双缓冲，保证 Camera 写入时 GL 不会读同一个 buffer
+        previewBufIndex = 1 - previewBufIndex
+        val directBuf = getOrCreateDirectBuf(previewBufIndex, byteCount)
+
         if (rowStride == w * 2 && pixelStride == 2) {
-            buf.asShortBuffer().get(bayer)
+            // 连续排布——批量拷贝
+            val oldLimit = buf.limit()
+            val oldPos = buf.position()
+            buf.limit(buf.position() + byteCount)
+            directBuf.put(buf)
+            buf.limit(oldLimit)
+            buf.position(oldPos)
         } else {
-            // 兜底逐像素
+            // 非连续排布——逐行拷贝（先走 ShortArray 中转）
             val sb = buf.asShortBuffer()
+            val tmp = ShortArray(w * h)
             var idx = 0
             for (row in 0 until h) {
                 for (col in 0 until w) {
-                    bayer[idx++] = sb.get(row * (rowStride / 2) + col * (pixelStride / 2))
+                    tmp[idx++] = sb.get(row * (rowStride / 2) + col * (pixelStride / 2))
                 }
             }
+            directBuf.asShortBuffer().put(tmp)
+            // asShortBuffer().put 不推进原始 ByteBuffer 的 position，需手动
+            directBuf.position(byteCount)
         }
-        // 白平衡 gain：从总结果拿最优；预览帧没 TotalCaptureResult，先用静态默认 1,1,1
-        // (动态 gain 随 CaptureCallback 更新到 lastWBGain)
+        directBuf.flip()  // limit=byteCount, position=0
+
+        // 白平衡 gain
         val wb = lastWBGain
-        // 诊断：每秒打印一次 RAW 取值与回调是否触发（黑屏排查用）
+
+        // 诊断：每秒打印一次（通过 directBuf 读取像素）
+        val shortView = directBuf.asShortBuffer()
         previewFrameCount++
         val nowNs = System.nanoTime()
         if (nowNs - lastPreviewLog > 1_000_000_000L) {
-            // 采样中心像素与统计
             val center = (h/2)*w + (w/2)
             val minVals = IntArray(4) { Int.MAX_VALUE }; val maxVals = IntArray(4)
             var step = 0
             var i = 0
-            while (i < bayer.size && step < 20000) {
-                // 粗采样看范围
-                val v = bayer[i].toInt() and 0xFFFF
-                val idx = (i % 4)
-                if (v < minVals[idx]) minVals[idx] = v
-                if (v > maxVals[idx]) maxVals[idx] = v
+            while (i < w * h && step < 20000) {
+                val v = shortView.get(i).toInt() and 0xFFFF
+                val ci = i % 4
+                if (v < minVals[ci]) minVals[ci] = v
+                if (v > maxVals[ci]) maxVals[ci] = v
                 i += 3; step++
             }
-            Log.d(LOG_TAG, "previewFrame OK w=$w h=$h center=${bayer[center].toInt() and 0xFFFF} " +
+            Log.d(LOG_TAG, "previewFrame OK w=$w h=$h center=${shortView.get(center).toInt() and 0xFFFF} " +
                 "range0=[${minVals.minOrNull()}:${maxVals.maxOrNull()}] onRawFrameSet=${onRawFrame != null} " +
                 "rowStride=$rowStride pixelStride=$pixelStride buf.remaining=${buf.remaining()} " +
-                "bayer[0..5]=${bayer.take(6).map { it.toInt() and 0xFFFF }} " +
+                "directBuf.remaining=${directBuf.remaining()} " +
                 "dynBl=${lastDynamicBlackLevel?.let { "[%.0f,%.0f,%.0f]".format(it[0],it[1],it[2]) } ?: "null"} " +
                 "dynWl=${lastDynamicWhiteLevel ?: "null"}")
             previewFrameCount = 0
             lastPreviewLog = nowNs
         }
-        // 传递动态黑/白电平（null 表示尚未收到 → 由接收方保持已有静态值）
+
+        // 传递动态黑/白电平
         val bl = lastDynamicBlackLevel
         val blR = bl?.elementAtOrNull(0)
         val blG = bl?.elementAtOrNull(1)
         val blB = bl?.elementAtOrNull(2)
         val wl = lastDynamicWhiteLevel
-        onRawFrame?.invoke(bayer, w, h, wb[0], wb[1], wb[2], blR, blG, blB, wl)
 
-        // 半自动 AE 反馈：若某一参数手动、另一参数 Auto，则根据画面亮度自动调节
-        updateSemiAutoExposure(bayer, w, h)
+        // ★ 传 ByteBuffer 而非 ShortArray，省掉一次 ShortArray→DirectByteBuffer 拷贝
+        directBuf.position(0)
+        onRawFrame?.invoke(directBuf, w, h, wb[0], wb[1], wb[2], blR, blG, blB, wl)
+
+        // 半自动 AE：从 directBuf 的 ShortBuffer 视图读取
+        shortView.rewind()
+        updateSemiAutoExposure(shortView, w, h)
     }
     private var previewFrameCount = 0
     private var lastPreviewLog = 0L
@@ -323,8 +387,9 @@ class CameraController(
      * 自动调节 Auto 轴参数，使画面曝光趋近标准测光值。
      *
      * 约每 10 帧调一次，避免震荡。
+     * @param bayerView DirectByteBuffer 的 ShortBuffer 视图（position=0）
      */
-    private fun updateSemiAutoExposure(bayer: ShortArray, w: Int, h: Int) {
+    private fun updateSemiAutoExposure(bayerView: java.nio.ShortBuffer, w: Int, h: Int) {
         val mc = manualController ?: return
         if (!mc.isManualExposure) {
             diagFrameCount = 0
@@ -360,7 +425,7 @@ class CameraController(
             val distSq = (dx * dx + dy * dy).coerceAtMost(2.0)
             val distNorm = distSq / 2.0
             val wt = 1.0 - distNorm * 0.8  // 矩形中心=1.0, 矩形边缘=0.2
-            weightedSum += (bayer[py * w + px].toInt() and 0xFFFF) * wt
+            weightedSum += (bayerView.get(py * w + px).toInt() and 0xFFFF) * wt
             weightSum += wt
             idx += step
         }
@@ -533,8 +598,8 @@ class CameraController(
         captureLatch = CountDownLatch(1)
     }
 
-    /** 多帧连拍：累积 multiFrameCount 帧后做对齐+融合。 */
-    fun startMultiCapture(callback: (mergedBayer: ShortArray, w: Int, h: Int, dngImage: Image?) -> Unit) {
+    /** 多帧连拍：累积 multiFrameCount 帧后做对齐+融合，内部走 gpuJpegProcessor 出图。 */
+    fun startMultiCapture(callback: (dngName: String, jpgName: String) -> Unit) {
         if (session == null || multiFrameCapturing) { Log.e(LOG_TAG, "multiFrame: session null or already capturing"); return }
         val lens = currentLens ?: return
         multiFrameBuffers.clear()
@@ -548,10 +613,13 @@ class CameraController(
             ?: lens.whiteLevel.toFloat()
         captureSnapshotWB = lastWBGain.copyOf()
         multiFrameCapturing = true
+        captureStartNs = System.nanoTime()
+        firstFrameArrivedNs = 0L
+        lastFrameArrivedNs = 0L
         Log.d(LOG_TAG, "multiFrame: starting capture of $multiFrameCount frames")
     }
 
-    /** 多帧全部到齐后，执行 JNI 对齐融合，然后回调。 */
+    /** 多帧全部到齐后，GPU 融合 → gpuJpegProcessor 渲染 → 保存 DNG/JPEG。 */
     private fun processMultiFrame() {
         val buffers = multiFrameBuffers.toList()
         val refImage = multiFrameRefImage
@@ -568,22 +636,73 @@ class CameraController(
             try {
                 val numTx = (w + 16 - 1) / 16
                 val numTy = (h + 16 - 1) / 16
-
                 val frameArr = buffers.toTypedArray()
-                val offsets = AlignMergeEngine.alignFrames(frameArr, w, h, nf)
-                Log.d(LOG_TAG, "multiFrame: align done (${offsets.size} ints)")
+                val tAlignStart = System.nanoTime()
 
-                val merged = AlignMergeEngine.mergeFrames(frameArr, offsets, w, h, nf, numTx, numTy)
-                Log.d(LOG_TAG, "multiFrame: merge done (${merged.size} shorts)")
+                val gpu = gpuMultiFrameProcessor ?: throw IllegalStateException("gpuMultiFrameProcessor not set")
+                val merged = gpu(frameArr, w, h, numTx, numTy)
+                val tGpuDone = System.nanoTime()
+                Log.d(LOG_TAG, String.format("multiFrame: GPU path took %.1fms (result %d shorts)",
+                    (tGpuDone - tAlignStart) / 1_000_000.0, merged.size))
+
+                // === 复用单帧 gpuJpegProcessor 渲染 Bitmap ===
+                val lens = currentLens
+                val bl = captureSnapshotBlackLevel ?: parseBlackLevel(lens?.blackLevelPattern ?: "") ?: floatArrayOf(0f, 0f, 0f)
+                val wl = captureSnapshotWhiteLevel ?: (lens?.whiteLevel?.toFloat() ?: 1023f)
+                val wbGain = captureSnapshotWB ?: floatArrayOf(1f, 1f, 1f)
+                val ccm = lens?.forwardMatrix1?.let {
+                    val parsed = parseColorMatrix(it)
+                    if (parsed.all { v -> v == 0f }) null
+                    else mergeForwardMatrixToSRGB(parsed)
+                } ?: floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)
+                val cfa = lens?.colorFilterArrangement ?: 2
+
+                val processor = gpuJpegProcessor
+                var jpgName = ""
+                if (processor != null) {
+                    val tJpegStart = System.nanoTime()
+                    val bitmap = processor(merged, w, h,
+                        bl[0], bl[1], bl[2], wl,
+                        wbGain[0], wbGain[1], wbGain[2],
+                        ccm, cfa)
+                    if (bitmap != null) {
+                        val iso = lastRepeatingResult?.get(CaptureResult.SENSOR_SENSITIVITY)
+                        val exposureNs = lastRepeatingResult?.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+                        val aperture = lens?.aperture
+                        val actualFl = lens?.focalLength
+                        val equivFl = if (lens != null && lens.sensorWidthMm > 0f && lens.sensorHeightMm > 0f) {
+                            val diag = sqrt((lens.sensorWidthMm * lens.sensorWidthMm + lens.sensorHeightMm * lens.sensorHeightMm).toDouble())
+                            val cropFactor = 43.27 / diag
+                            (lens.focalLength * cropFactor).roundToInt()
+                        } else null
+                        jpgName = saveBitmapAsJpeg(context, bitmap,
+                            "IMG_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())}.jpg",
+                            iso, exposureNs, aperture, actualFl, equivFl)
+                        Log.d(LOG_TAG, String.format("multiFrame: JPEG saved in %.1fms",
+                            (System.nanoTime() - tJpegStart) / 1_000_000.0))
+                    }
+                }
+
+                // === DNG（复用 writeDng） ===
+                var dngName = ""
+                if (saveDng && refImage != null && captureCharacteristics != null && lastRepeatingResult != null) {
+                    val tDngStart = System.nanoTime()
+                    dngName = writeDng(captureCharacteristics!!, lastRepeatingResult!!, refImage, lens)
+                    Log.d(LOG_TAG, String.format("multiFrame: DNG saved in %.1fms",
+                        (System.nanoTime() - tDngStart) / 1_000_000.0))
+                }
+                refImage?.close()
+
+                val tDone = System.nanoTime()
+                Log.d(LOG_TAG, String.format("multiFrame: total processing %.1fms (frame accumulation to save done)",
+                    (tDone - lastFrameArrivedNs) / 1_000_000.0))
 
                 mainHandler.post {
-                    cb(merged, w, h, refImage)
+                    cb(dngName, jpgName)
                 }
             } catch (e: Exception) {
-                Log.e(LOG_TAG, "multiFrame processing failed", e)
-                mainHandler.post {
-                    cb(buffers[0], w, h, refImage)
-                }
+                Log.e(LOG_TAG, "multiFrame GPU path failed", e)
+                throw e
             }
         }
     }
@@ -624,6 +743,7 @@ class CameraController(
         image: Image,
         lens: LensInfo?
     ): String {
+        val t0 = System.nanoTime()
         val displayName = "IMG_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())}_" +
             (lens?.focalLength?.let { "${it}mm" } ?: "") + ".dng"
 
@@ -639,9 +759,11 @@ class CameraController(
         }
         val uri: Uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: run { Log.e(LOG_TAG, "MediaStore insert failed"); return displayName }
+        val t1 = System.nanoTime()
 
         var bytes = 0L
         try {
+            val tDngStart = System.nanoTime()
             resolver.openOutputStream(uri)?.use { out: OutputStream ->
                 DngCreator(characteristics, result).apply {
                     val sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
@@ -651,13 +773,21 @@ class CameraController(
                 }
                 // openOutputStream 后只能近似得到大小，这里以写入完成标记
             }
+            val tDngDone = System.nanoTime()
             bytes = try { resolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: 0L } catch (e: Exception) { 0L }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 values.clear()
                 values.put(MediaStore.Images.Media.IS_PENDING, 0)
                 resolver.update(uri, values, null, null)
             }
-            Log.d(LOG_TAG, "DNG saved: $displayName ($bytes bytes) -> Pictures/gufa/")
+            val tDone = System.nanoTime()
+            Log.d(LOG_TAG, String.format("writeDng: MediaStore.insert=%.1fms DngCreator.writeImage=%.1fms IS_PENDING=%.0fms total=%.1fms (%s, %s)",
+                (t1 - t0) / 1_000_000.0,
+                (tDngDone - tDngStart) / 1_000_000.0,
+                (tDone - tDngDone) / 1_000_000.0,
+                (tDone - t0) / 1_000_000.0,
+                displayName,
+                if (bytes > 0) "$bytes bytes" else "size_unknown"))
         } catch (e: Exception) {
             Log.e(LOG_TAG, "writeDng err", e)
             try { resolver.delete(uri, null, null) } catch (_: Exception) {}

@@ -88,6 +88,24 @@ fun extractRawShorts(image: Image): ShortArray {
     return raw
 }
 
+fun logMiddleShorts(tag: String, data: ShortArray, w: Int, h: Int) {
+    if (data.size < w * h) return
+    val center = (h / 2) * w + (w / 2)
+    val start = (center - 5).coerceAtLeast(0)
+    val end = (center + 5).coerceAtMost(data.size)
+    val vals = (start until end).map { data[it].toInt() and 0xFFFF }
+    Log.d(tag, "middle10 shorts idx[$start..${end-1}]: ${vals.joinToString(",")}")
+}
+
+fun logMiddleFloats(tag: String, data: FloatArray, w: Int, h: Int) {
+    if (data.size < w * h) return
+    val center = (h / 2) * w + (w / 2)
+    val start = (center - 5).coerceAtLeast(0)
+    val end = (center + 5).coerceAtMost(data.size)
+    val vals = (start until end).map { "%.6f".format(data[it]) }
+    Log.d(tag, "middle10 floats idx[$start..${end-1}]: ${vals.joinToString(",")}")
+}
+
 fun saveBitmapAsJpeg(
     context: Context,
     bitmap: Bitmap,
@@ -98,6 +116,7 @@ fun saveBitmapAsJpeg(
     focalLength: Float? = null,
     focalLength35mm: Int? = null
 ): String {
+    val tStart = System.nanoTime()
     val resolver = context.contentResolver
     val values = ContentValues().apply {
         put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
@@ -110,9 +129,11 @@ fun saveBitmapAsJpeg(
     val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
         ?: return displayName
     try {
+        val tCompressStart = System.nanoTime()
         resolver.openOutputStream(uri)?.use { out: OutputStream ->
             bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
         }
+        val tCompressDone = System.nanoTime()
         // 写入 EXIF（IS_PENDING 仍为 1，相册不可见）
         if (iso != null || exposureTimeNs != null || aperture != null || focalLength != null || focalLength35mm != null) {
             try {
@@ -141,11 +162,21 @@ fun saveBitmapAsJpeg(
                 Log.w("ClassicCamera", "write EXIF err", e)
             }
         }
+        val tExifDone = System.nanoTime()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             values.clear()
             values.put(MediaStore.Images.Media.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
         }
+        val tDone = System.nanoTime()
+        val bmpSize = "${bitmap.width}x${bitmap.height}"
+        Log.d("ClassicCamera", String.format("saveBitmapAsJpeg %s: MediaStore.insert=%.1fms compress(95)=%.1fms EXIF=%.1fms IS_PENDING=%.1fms total=%.1fms",
+            displayName,
+            (tCompressStart - tStart) / 1_000_000.0,
+            (tCompressDone - tCompressStart) / 1_000_000.0,
+            (tExifDone - tCompressDone) / 1_000_000.0,
+            (tDone - tExifDone) / 1_000_000.0,
+            (tDone - tStart) / 1_000_000.0))
     } catch (e: Exception) {
         // ignore
     }
