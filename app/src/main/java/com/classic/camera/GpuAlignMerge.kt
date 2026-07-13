@@ -30,13 +30,10 @@ class GpuAlignMerge {
     private var progAlign = 0
     private var progWeights = 0
     private var progMerge = 0
-    private var progMergeFs = 0
-    private val fullScreenVAO = IntArray(1)
 
     private val frameTex = IntArray(MAX_FRAMES)
     private val pyrTex = IntArray(MAX_FRAMES * 3)
     private var fbo = 0
-    private var mergeOutTex = 0
     private var weightTex = 0
     private var level0SSBO = 0
     private var level1SSBO = 0
@@ -77,27 +74,6 @@ class GpuAlignMerge {
             progMerge = createComputeProgram(CS_MERGE)
             progCSBoxDown2 = createComputeProgram(CS_BOX_DOWN2)
             progCSGaussDown4 = createComputeProgram(CS_GAUSS_DOWN4)
-            GLES30.glGenVertexArrays(1, fullScreenVAO, 0)
-            GLES30.glBindVertexArray(fullScreenVAO[0])
-
-            val vs = GLES30.glCreateShader(GLES30.GL_VERTEX_SHADER)
-            GLES30.glShaderSource(vs, """
-                #version 310 es
-                void main() {
-                    float x = -1.0 + float((gl_VertexID & 1) << 2);
-                    float y = -1.0 + float((gl_VertexID & 2) << 1);
-                    gl_Position = vec4(x, y, 0.0, 1.0);
-                }
-            """.trimIndent())
-            GLES30.glCompileShader(vs)
-            val fs = GLES30.glCreateShader(GLES30.GL_FRAGMENT_SHADER)
-            GLES30.glShaderSource(fs, FS_MERGE)
-            GLES30.glCompileShader(fs)
-            progMergeFs = GLES30.glCreateProgram()
-            GLES30.glAttachShader(progMergeFs, vs)
-            GLES30.glAttachShader(progMergeFs, fs)
-            GLES30.glLinkProgram(progMergeFs)
-            GLES30.glBindVertexArray(0)
             GLES30.glGenTextures(MAX_FRAMES, frameTex, 0)
             for (i in 0 until MAX_FRAMES) {
                 GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, frameTex[i])
@@ -109,7 +85,6 @@ class GpuAlignMerge {
             GLES30.glGenTextures(MAX_FRAMES * 3, pyrTex, 0)
             val fboArr = IntArray(1); GLES30.glGenFramebuffers(1, fboArr, 0); fbo = fboArr[0]
             val texArr = IntArray(1)
-            GLES30.glGenTextures(1, texArr, 0); mergeOutTex = texArr[0]
             GLES30.glGenTextures(1, texArr, 0); weightTex = texArr[0]
             val outBuf = IntArray(1)
             GLES30.glGenBuffers(1, outBuf, 0)
@@ -124,11 +99,9 @@ class GpuAlignMerge {
     }
 
     fun releaseGL() {
-        if (fullScreenVAO[0] != 0) { GLES30.glDeleteVertexArrays(1, fullScreenVAO, 0); fullScreenVAO[0] = 0 }
         if (frameTex[0] != 0) { GLES30.glDeleteTextures(MAX_FRAMES, frameTex, 0); frameTex.fill(0) }
         if (pyrTex[0] != 0) { GLES30.glDeleteTextures(MAX_FRAMES * 3, pyrTex, 0); pyrTex.fill(0) }
         if (fbo != 0) { GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0); fbo = 0 }
-        if (mergeOutTex != 0) { GLES30.glDeleteTextures(1, intArrayOf(mergeOutTex), 0); mergeOutTex = 0 }
         if (weightTex != 0) { GLES30.glDeleteTextures(1, intArrayOf(weightTex), 0); weightTex = 0 }
         if (level0SSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(level0SSBO), 0); level0SSBO = 0 }
         if (level1SSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(level1SSBO), 0); level1SSBO = 0 }
@@ -140,7 +113,6 @@ class GpuAlignMerge {
         if (progAlign != 0) { GLES31.glDeleteProgram(progAlign); progAlign = 0 }
         if (progWeights != 0) { GLES31.glDeleteProgram(progWeights); progWeights = 0 }
         if (progMerge != 0) { GLES30.glDeleteProgram(progMerge); progMerge = 0 }
-        if (progMergeFs != 0) { GLES30.glDeleteProgram(progMergeFs); progMergeFs = 0 }
         reuseByteBuf = null
         initialized = false
     }
@@ -287,9 +259,12 @@ class GpuAlignMerge {
         if (zeroSSBO == 0) {
             val ids = IntArray(1); GLES31.glGenBuffers(1, ids, 0); zeroSSBO = ids[0]
         }
+        val zeroSize = nt2x * nt2y * 2 * 4
+        val zeroArr = ByteArray(zeroSize)
+        val zeroBuf = ByteBuffer.allocateDirect(zeroSize).order(ByteOrder.nativeOrder()).put(zeroArr)
+        zeroBuf.position(0)
         GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, zeroSSBO)
-        val zeroBuf = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder()).putInt(0); zeroBuf.position(0)
-        GLES31.glBufferData(GLES31.GL_SHADER_STORAGE_BUFFER, 4, zeroBuf, GLES31.GL_STATIC_READ)
+        GLES31.glBufferData(GLES31.GL_SHADER_STORAGE_BUFFER, zeroSize, zeroBuf, GLES31.GL_STATIC_DRAW)
 
         val uRefLoc = GLES31.glGetUniformLocation(progAlign, "uRef")
         val uAltLoc = GLES31.glGetUniformLocation(progAlign, "uAlt")
@@ -468,7 +443,7 @@ class GpuAlignMerge {
         void main() {
             ivec2 p = ivec2(gl_GlobalInvocationID.xy);
             ivec2 sp = p * 2;
-            if (sp.x >= uSrcSize.x || sp.y >= uSrcSize.y) { imageStore(uDst, p, vec4(0.0)); return; }
+            if (sp.x >= uSrcSize.x || sp.y >= uSrcSize.y) { return; }
             float sum = 0.0; int cnt = 0;
             for (int dy=0; dy<2; dy++) for (int dx=0; dx<2; dx++) {
                 int sx = sp.x+dx, sy = sp.y+dy;
@@ -487,7 +462,7 @@ class GpuAlignMerge {
         void main() {
             ivec2 p = ivec2(gl_GlobalInvocationID.xy);
             ivec2 cp = p * 4;
-            if (cp.x >= uSrcSize.x || cp.y >= uSrcSize.y) { imageStore(uDst, p, vec4(0.0)); return; }
+            if (cp.x >= uSrcSize.x || cp.y >= uSrcSize.y) { return; }
             const float k[5] = float[](1.0,4.0,6.0,4.0,1.0);
             float sum = 0.0; float tw = 0.0;
             for (int dy=-2; dy<=2; dy++) for (int dx=-2; dx<=2; dx++) {
@@ -518,8 +493,11 @@ class GpuAlignMerge {
             uint tx = gl_WorkGroupID.x, ty = gl_WorkGroupID.y;
             uint lx = gl_LocalInvocationID.x, ly = gl_LocalInvocationID.y, tid = ly*16u+lx;
             ivec2 sz = textureSize(uRef, 0);
-            int gx = min(int(tx*16u+lx), sz.x-1);
-            int gy = min(int(ty*16u+ly), sz.y-1);
+            int gx = int(tx*16u+lx);
+            int gy = int(ty*16u+ly);
+            bool valid = (gx < sz.x && gy < sz.y);
+            gx = min(gx, sz.x-1);
+            gy = min(gy, sz.y-1);
             sRef[tid] = texelFetch(uRef, ivec2(gx,gy), 0).r;
             memoryBarrierShared(); barrier();
 
@@ -534,7 +512,7 @@ class GpuAlignMerge {
                 int ox = bx+dx, oy = by+dy;
                 int ax = clamp(gx+ox,0,sz.x-1), ay = clamp(gy+oy,0,sz.y-1);
                 float av = texelFetch(uAlt,ivec2(ax,ay),0).r;
-                sDiff[tid] = abs(sRef[tid] - av);
+                sDiff[tid] = valid ? abs(sRef[tid] - av) : 0.0;
                 memoryBarrierShared(); barrier();
                 for (int s=128; s>0; s>>=1) {
                     if (tid < uint(s)) sDiff[tid] += sDiff[tid+uint(s)];
@@ -567,7 +545,9 @@ class GpuAlignMerge {
             uint tx=gl_WorkGroupID.x, ty=gl_WorkGroupID.y;
             uint tid=gl_LocalInvocationIndex; uint lx=gl_LocalInvocationID.x,ly=gl_LocalInvocationID.y;
             ivec2 sz=textureSize(uHalf0,0);
-            int hx=min(int(tx*16u+lx),sz.x-1); int hy=min(int(ty*16u+ly),sz.y-1);
+            int orig_hx=int(tx*16u+lx); int orig_hy=int(ty*16u+ly);
+            bool valid=(orig_hx<sz.x && orig_hy<sz.y);
+            int hx=min(orig_hx,sz.x-1); int hy=min(orig_hy,sz.y-1);
             float rv=texelFetch(uHalf0,ivec2(hx,hy),0).r;
             int fi=uGridSize.x*uGridSize.y*2;
             int baseBi = uFrameBase + (int(ty) * uGridSize.x + int(tx)) * 2;
@@ -581,7 +561,7 @@ class GpuAlignMerge {
                 if (f==1) av=texelFetch(uHalf1,ivec2(ahx,ahy),0).r;
                 else if (f==2) av=texelFetch(uHalf2,ivec2(ahx,ahy),0).r;
                 else av=texelFetch(uHalf3,ivec2(ahx,ahy),0).r;
-                sL1[tid] = abs(rv - av);
+                sL1[tid] = valid ? abs(rv - av) : 0.0;
                 memoryBarrierShared(); barrier();
                 for (int s=128; s>0; s>>=1) {
                     if (tid < uint(s)) sL1[tid] += sL1[tid+uint(s)];
@@ -651,56 +631,6 @@ class GpuAlignMerge {
         }
     """.trimIndent()
 
-    private val FS_MERGE = """
-        #version 310 es
-        precision highp usampler2D; precision highp float; precision highp int;
-        layout(location=0) out vec4 outColor;
-        uniform highp usampler2D uTex[4]; uniform sampler2D uWeightTex;
-        uniform ivec2 uImgSize; uniform ivec2 uGridSize; uniform int uNumFrames;
-        layout(std430,binding=3) readonly buffer Off { int offs[]; };
-        float hann(int i) {
-            float a=3.14159265*(float(i)+0.5)/64.0;
-            return 0.5-0.5*cos(2.0*a);
-        }
-        void main() {
-            ivec2 p = ivec2(int(gl_FragCoord.x), uImgSize.y - 1 - int(gl_FragCoord.y));
-            int x=p.x, y=p.y;
-            int t0x=x/32-1, t1x=x/32, t0y=y/32-1, t1y=y/32;
-            int c0x=clamp(t0x,0,uGridSize.x-1),c1x=clamp(t1x,0,uGridSize.x-1);
-            int c0y=clamp(t0y,0,uGridSize.y-1),c1y=clamp(t1y,0,uGridSize.y-1);
-            int p0x=(x%32)+32, p1x=x%32, p0y=(y%32)+32, p1y=y%32;
-            float wx0=hann(p0x),wx1=hann(p1x),wy0=hann(p0y),wy1=hann(p1y);
-            float res=0.0; int fi=uGridSize.x*uGridSize.y*2;
-            for (int i=0;i<4;i++) {
-                int tx=(i&1)==0?c0x:c1x, ty=i<2?c0y:c1y;
-                float wx=(i&1)==0?wx0:wx1, wy=i<2?wy0:wy1;
-                int bi=(ty*uGridSize.x+tx)*2;
-                int ox=(uNumFrames>1)?offs[0*fi+bi]*2:0, oy=(uNumFrames>1)?offs[0*fi+bi+1]*2:0;
-                int ox2=(uNumFrames>2)?offs[1*fi+bi]*2:0, oy2=(uNumFrames>2)?offs[1*fi+bi+1]*2:0;
-                int ox3=(uNumFrames>3)?offs[2*fi+bi]*2:0, oy3=(uNumFrames>3)?offs[2*fi+bi+1]*2:0;
-                vec3 w=texelFetch(uWeightTex,ivec2(tx,ty),0).rgb;
-                float r0 = float(texelFetch(uTex[0], clamp(p, ivec2(0), uImgSize-1), 0).r) / 65535.0;
-                float sum=r0; float tw=1.0;
-                if (uNumFrames>1&&w.r>0.001) {
-                    sum+=float(texelFetch(uTex[1],clamp(p+ivec2(ox,oy),ivec2(0),uImgSize-1),0).r)/65535.0*w.r;
-                    tw+=w.r;
-                }
-                if (uNumFrames>2&&w.g>0.001) {
-                    sum+=float(texelFetch(uTex[2],clamp(p+ivec2(ox2,oy2),ivec2(0),uImgSize-1),0).r)/65535.0*w.g;
-                    tw+=w.g;
-                }
-                if (uNumFrames>3&&w.b>0.001) {
-                    sum+=float(texelFetch(uTex[3],clamp(p+ivec2(ox3,oy3),ivec2(0),uImgSize-1),0).r)/65535.0*w.b;
-                    tw+=w.b;
-                }
-                res+=wx*wy*(sum/tw);
-            }
-            float n=wx0*wy0+wx1*wy0+wx0*wy1+wx1*wy1;
-            float fv=clamp(res/n,0.0,1.0);
-            outColor = vec4(fv, 0.0, 0.0, 1.0);
-        }
-    """.trimIndent()
-
     private fun compileShader(type: Int, src: String): Int {
         val s = GLES30.glCreateShader(type)
         GLES30.glShaderSource(s, src)
@@ -713,19 +643,6 @@ class GpuAlignMerge {
             throw RuntimeException("shader error: $log\n${src.take(200)}")
         }
         return s
-    }
-
-    private fun createProgram(vs: String, fs: String): Int {
-        val v = compileShader(GLES30.GL_VERTEX_SHADER, vs)
-        val f = compileShader(GLES30.GL_FRAGMENT_SHADER, fs)
-        val p = GLES30.glCreateProgram()
-        GLES30.glAttachShader(p, v); GLES30.glAttachShader(p, f)
-        GLES30.glLinkProgram(p)
-        val ok = IntArray(1)
-        GLES30.glGetProgramiv(p, GLES30.GL_LINK_STATUS, ok, 0)
-        if (ok[0] == 0) throw RuntimeException("link: ${GLES30.glGetProgramInfoLog(p)}")
-        GLES30.glDeleteShader(v); GLES30.glDeleteShader(f)
-        return p
     }
 
     private fun createComputeProgram(src: String): Int {
