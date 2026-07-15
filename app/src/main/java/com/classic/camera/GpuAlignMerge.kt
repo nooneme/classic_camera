@@ -345,30 +345,6 @@ class GpuAlignMerge {
             GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
         }
 
-        // === DEBUG: 读回 level0SSBO 前几个偏移量 ===
-        GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, level0SSBO)
-        val ssboSize = (nf - 1) * nt0x * nt0y * 2 * 4
-        val mapped = GLES31.glMapBufferRange(GLES31.GL_SHADER_STORAGE_BUFFER, 0, ssboSize, GLES31.GL_MAP_READ_BIT)
-        if (mapped is java.nio.ByteBuffer) {
-            val ssboBuffer = mapped as java.nio.ByteBuffer
-            ssboBuffer.order(ByteOrder.nativeOrder())
-            val intBuf = ssboBuffer.asIntBuffer()
-            var totalOffsetX = 0; var totalOffsetY = 0; var count = 0
-            for (f in 1 until nf) {
-                val baseIndex = (f - 1) * nt0x * nt0y * 2
-                for (i in 0 until minOf(nt0x * nt0y, 100)) {
-                    val idx = baseIndex + i * 2
-                    if (idx + 1 < intBuf.capacity()) {
-                        totalOffsetX += kotlin.math.abs(intBuf.get(idx))
-                        totalOffsetY += kotlin.math.abs(intBuf.get(idx + 1))
-                        count++
-                    }
-                }
-            }
-            Log.d(TAG, "Align offset avg: dx=${totalOffsetX / maxOf(1, count)}, dy=${totalOffsetY / maxOf(1, count)} (sample=$count tiles)")
-            GLES31.glUnmapBuffer(GLES31.GL_SHADER_STORAGE_BUFFER)
-        }
-        GLES30.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
     }
 
     private fun computeWeights(nf: Int, numTx: Int, numTy: Int) {
