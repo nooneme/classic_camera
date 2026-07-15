@@ -8,7 +8,7 @@ import java.nio.ByteOrder
 
 /**
  * GPU 加速多帧对齐融合管线（OpenGL ES 3.1+）。
- *
+ * 支持运行时 2~MAX_FRAMES 帧，实际帧数由 process() 的 frames.size 决定。
  * 所有方法必须在 GL 线程调用。
  */
 class GpuAlignMerge {
@@ -19,7 +19,8 @@ class GpuAlignMerge {
         private const val GL_R32UI = 0x8236
         private const val GL_RED_INTEGER = 0x8D94
         private const val T_SIZE_2 = 16
-        private const val MAX_FRAMES = 4
+        private const val MAX_FRAMES = 8
+        private const val SBO_WEIGHT_BINDING = 5
     }
 
     private var initialized = false
@@ -32,13 +33,12 @@ class GpuAlignMerge {
     private var progMerge = 0
 
     // 传感器的白电平（用于金字塔归一化）。外部通过 process() 传入。
-    // 默认 65535（16-bit 满量程），实际值由 process() 参数覆盖。
     private var sensorWhiteLevel: Float = 65535.0f
 
     private val frameTex = IntArray(MAX_FRAMES)
     private val pyrTex = IntArray(MAX_FRAMES * 3)
     private var fbo = 0
-    private var weightTex = 0
+    private var weightSSBO = 0
     private var level0SSBO = 0
     private var level1SSBO = 0
     private var level2SSBO = 0
@@ -56,8 +56,12 @@ class GpuAlignMerge {
         val minor = IntArray(1)
         GLES30.glGetIntegerv(GLES30.GL_MAJOR_VERSION, major, 0)
         GLES30.glGetIntegerv(GLES30.GL_MINOR_VERSION, minor, 0)
-        supported = (major[0] > 3) || (major[0] == 3 && minor[0] >= 1)
-        android.util.Log.d(TAG, "GL_VERSION=$ver (major=${major[0]} minor=${minor[0]}), compute=$supported")
+        val es31 = (major[0] > 3) || (major[0] == 3 && minor[0] >= 1)
+        // 检查 GL_EXT_gpu_shader5 扩展（sampler 数组动态索引需要）
+        val extStr = GLES30.glGetString(GLES30.GL_EXTENSIONS) ?: ""
+        val hasExt = extStr.contains("GL_EXT_gpu_shader5")
+        supported = es31 && hasExt
+        android.util.Log.d(TAG, "GL_VERSION=$ver (major=${major[0]} minor=${minor[0]}), compute=$es31, gpu_shader5=$hasExt, supported=$supported")
         return supported
     }
 
@@ -88,8 +92,6 @@ class GpuAlignMerge {
             }
             GLES30.glGenTextures(MAX_FRAMES * 3, pyrTex, 0)
             val fboArr = IntArray(1); GLES30.glGenFramebuffers(1, fboArr, 0); fbo = fboArr[0]
-            val texArr = IntArray(1)
-            GLES30.glGenTextures(1, texArr, 0); weightTex = texArr[0]
             val outBuf = IntArray(1)
             GLES30.glGenBuffers(1, outBuf, 0)
             outSSBO = outBuf[0]
@@ -106,12 +108,12 @@ class GpuAlignMerge {
         if (frameTex[0] != 0) { GLES30.glDeleteTextures(MAX_FRAMES, frameTex, 0); frameTex.fill(0) }
         if (pyrTex[0] != 0) { GLES30.glDeleteTextures(MAX_FRAMES * 3, pyrTex, 0); pyrTex.fill(0) }
         if (fbo != 0) { GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0); fbo = 0 }
-        if (weightTex != 0) { GLES30.glDeleteTextures(1, intArrayOf(weightTex), 0); weightTex = 0 }
         if (level0SSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(level0SSBO), 0); level0SSBO = 0 }
         if (level1SSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(level1SSBO), 0); level1SSBO = 0 }
         if (level2SSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(level2SSBO), 0); level2SSBO = 0 }
         if (zeroSSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(zeroSSBO), 0); zeroSSBO = 0 }
         if (outSSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(outSSBO), 0); outSSBO = 0 }
+        if (weightSSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(weightSSBO), 0); weightSSBO = 0 }
         if (progCSBoxDown2 != 0) { GLES30.glDeleteProgram(progCSBoxDown2); progCSBoxDown2 = 0 }
         if (progCSGaussDown4 != 0) { GLES30.glDeleteProgram(progCSGaussDown4); progCSGaussDown4 = 0 }
         if (progAlign != 0) { GLES31.glDeleteProgram(progAlign); progAlign = 0 }
@@ -131,6 +133,7 @@ class GpuAlignMerge {
      * 对齐 + 融合多帧为单帧 ShortArray。
      * 返回 null 表示失败（调用者应回退 CPU）。
      * @param whiteLevel 传感器的白电平（如 1023 或 4095），用于金字塔归一化。
+     * frames.size 不得超过 MAX_FRAMES(8)。
      */
     fun process(frames: Array<ShortArray>, w: Int, h: Int, numTx: Int, numTy: Int, whiteLevel: Float = 65535.0f): ShortArray {
         if (!initialized) {
@@ -145,10 +148,6 @@ class GpuAlignMerge {
 
             buildPyramids(w, h, nf)
             alignAllFrames(w, h, nf, numTx, numTy)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, weightTex)
-            GLES30.glTexStorage2D(GLES30.GL_TEXTURE_2D, 1, GLES30.GL_RGBA8, numTx, numTy)
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
             computeWeights(nf, numTx, numTy)
             return merge(w, h, nf, numTx, numTy)
         } finally {
@@ -160,6 +159,7 @@ class GpuAlignMerge {
             GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 2, 0)
             GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 3, 0)
             GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 4, 0)
+            GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, SBO_WEIGHT_BINDING, 0)
             GLES30.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
             GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
             GLES30.glBindBuffer(GLES30.GL_ELEMENT_ARRAY_BUFFER, 0)
@@ -171,7 +171,7 @@ class GpuAlignMerge {
                 GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + i)
                 GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
             }
-            GLES30.glActiveTexture(GLES30.GL_TEXTURE0) // 恢复默认纹理单元
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
 
             // 4. 解绑 FBO 及其挂载点
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
@@ -179,10 +179,8 @@ class GpuAlignMerge {
             // 5. 清空 Program
             GLES31.glUseProgram(0)
 
-            // 6. 循环清除所有可能残留的 GL 错误，防止错误级联导致后续渲染死锁
-            while (GLES30.glGetError() != GLES30.GL_NO_ERROR) {
-                // 仅用于清除错误队列
-            }
+            // 6. 循环清除所有可能残留的 GL 错误
+            while (GLES30.glGetError() != GLES30.GL_NO_ERROR) { }
         }
     }
 
@@ -348,54 +346,61 @@ class GpuAlignMerge {
     }
 
     private fun computeWeights(nf: Int, numTx: Int, numTy: Int) {
+        // 确保权重 SSBO 始终存在（merge 也需要它）
+        val wgtSize = numTx * numTy * MAX_FRAMES * 4
+        ensureSSBO(::weightSSBO, wgtSize)
+        GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, SBO_WEIGHT_BINDING, weightSSBO)
         if (nf <= 1) return
+
         GLES31.glUseProgram(progWeights)
         // 所有副帧的偏移 SSBO 绑定到 slot 2
         GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 2, level0SSBO)
-        GLES31.glUniform2i(
-            GLES31.glGetUniformLocation(progWeights, "uGridSize"), numTx, numTy)
 
-        // 绑定输入：ref + nf-1 副帧的 half res（分开的 sampler uniform）
-        val samplerNames = arrayOf("uHalf0", "uHalf1", "uHalf2", "uHalf3")
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(progWeights, "uGridSize"), numTx, numTy)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(progWeights, "uNumFrames"), nf)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(progWeights, "uMaxFrames"), MAX_FRAMES)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(progWeights, "uFrameBase"), 0)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(progWeights, "uWhiteLevel"), sensorWhiteLevel)
+
+        // 绑定帧的 half-res 纹理到 sampler 数组
         for (i in 0 until nf) {
             GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + i)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pyrTex[pt(i, 0)])
-            val loc = GLES31.glGetUniformLocation(progWeights, samplerNames[i])
-            if (loc >= 0) GLES31.glUniform1i(loc, i)
         }
-        // 输出权重纹理（仍用 imageStore）
-        GLES31.glBindImageTexture(8, weightTex, 0, false, 0, GLES31.GL_WRITE_ONLY, GLES30.GL_RGBA8)
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(progWeights, "uNumFrames"), nf)
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(progWeights, "uFrameBase"), 0)
-            GLES31.glUniform1f(GLES31.glGetUniformLocation(progWeights, "uWhiteLevel"), sensorWhiteLevel)
-        GLES31.glDispatchCompute(numTx, numTy, 1)
-        GLES31.glMemoryBarrier(GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
+        val uHalfLoc = GLES31.glGetUniformLocation(progWeights, "uHalf")
+        if (uHalfLoc >= 0) {
+            val units = IntArray(MAX_FRAMES) { it }
+            GLES31.glUniform1iv(uHalfLoc, MAX_FRAMES, units, 0)
+        }
 
+        GLES31.glDispatchCompute(numTx, numTy, 1)
+        GLES31.glMemoryBarrier(GLES31.GL_TEXTURE_FETCH_BARRIER_BIT or GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
     }
 
     private fun merge(w: Int, h: Int, nf: Int, numTx: Int, numTy: Int): ShortArray {
         GLES31.glUseProgram(progMerge)
 
+        // 绑定原始帧纹理到 sampler 数组 uTex
         for (i in 0 until nf) {
             GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + i)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, frameTex[i])
-            val loc = GLES30.glGetUniformLocation(progMerge, "uTex[$i]")
-            if (loc >= 0) GLES30.glUniform1i(loc, i)
+        }
+        val uTexLoc = GLES30.glGetUniformLocation(progMerge, "uTex")
+        if (uTexLoc >= 0) {
+            val units = IntArray(MAX_FRAMES) { it }
+            GLES30.glUniform1iv(uTexLoc, MAX_FRAMES, units, 0)
         }
 
         GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 3, level0SSBO)
+        GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, SBO_WEIGHT_BINDING, weightSSBO)
 
         GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 4, outSSBO)
         GLES30.glBufferData(GLES31.GL_SHADER_STORAGE_BUFFER, w * h * 4, null, GLES30.GL_DYNAMIC_READ)
 
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE4)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, weightTex)
-        val wtLoc = GLES30.glGetUniformLocation(progMerge, "uWeightTex")
-        if (wtLoc >= 0) GLES30.glUniform1i(wtLoc, 4)
-
         GLES31.glUniform2i(GLES31.glGetUniformLocation(progMerge, "uImgSize"), w, h)
         GLES31.glUniform2i(GLES31.glGetUniformLocation(progMerge, "uGridSize"), numTx, numTy)
         GLES31.glUniform1i(GLES31.glGetUniformLocation(progMerge, "uNumFrames"), nf)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(progMerge, "uMaxFrames"), MAX_FRAMES)
 
         val numGroupsX = (w + 15) / 16
         val numGroupsY = (h + 15) / 16
@@ -423,11 +428,7 @@ class GpuAlignMerge {
 
     private fun initTex(tex: Int, tw: Int, th: Int) {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, tex)
-
-        // 修改点：使用 glTexStorage2D 替代 glTexImage2D
-        // 参数含义：目标、Mipmap层数(我们只用到0层，所以是1)、内部格式、宽度、高度
         GLES30.glTexStorage2D(GLES30.GL_TEXTURE_2D, 1, GLES30.GL_RGBA8, tw, th)
-
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
@@ -443,15 +444,6 @@ class GpuAlignMerge {
         GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, idRef.get())
         GLES31.glBufferData(GLES31.GL_SHADER_STORAGE_BUFFER, minBytes, null, GLES31.GL_DYNAMIC_COPY)
         GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
-    }
-
-    private fun checkGLError(tag: String) {
-        val err = GLES30.glGetError()
-        if (err != GLES30.GL_NO_ERROR) {
-            Log.e(TAG, "GL Error at [$tag]: 0x${Integer.toHexString(err)}")
-        } else {
-            Log.d(TAG, "GL OK at [$tag]")
-        }
     }
 
     // ===================== 释放 =====================
@@ -567,39 +559,36 @@ class GpuAlignMerge {
 
     private val CS_WEIGHTS = """
         #version 310 es
+        #extension GL_EXT_gpu_shader5 : require
         precision highp sampler2D;
         precision highp image2D;
         layout(local_size_x = 16, local_size_y = 16) in;
-        uniform sampler2D uHalf0;
-        uniform sampler2D uHalf1;
-        uniform sampler2D uHalf2;
-        uniform sampler2D uHalf3;
+        const int _MAX_FRAMES_ = $MAX_FRAMES;
+        uniform sampler2D uHalf[_MAX_FRAMES_];
         uniform float uWhiteLevel;
         layout(std430, binding=2) buffer Off { int offs[]; };
-        layout(rgba8, binding=8) writeonly uniform image2D uWt;
-        uniform ivec2 uGridSize; uniform int uNumFrames; uniform int uFrameBase;
+        layout(std430, binding=$SBO_WEIGHT_BINDING) buffer WgtBuf { float wgtOut[]; };
+        uniform ivec2 uGridSize; uniform int uNumFrames; uniform int uMaxFrames; uniform int uFrameBase;
         shared float sL1[256];
         void main() {
             uint tx=gl_WorkGroupID.x, ty=gl_WorkGroupID.y;
             uint tid=gl_LocalInvocationIndex; uint lx=gl_LocalInvocationID.x,ly=gl_LocalInvocationID.y;
-            ivec2 sz=textureSize(uHalf0,0);
+            ivec2 sz=textureSize(uHalf[0],0);
             int orig_hx=int(tx*16u+lx); int orig_hy=int(ty*16u+ly);
             bool valid=(orig_hx<sz.x && orig_hy<sz.y);
             int hx=min(orig_hx,sz.x-1); int hy=min(orig_hy,sz.y-1);
-            float rv=texelFetch(uHalf0,ivec2(hx,hy),0).r;
+            float rv=texelFetch(uHalf[0],ivec2(hx,hy),0).r;
+            int base = (int(ty) * uGridSize.x + int(tx)) * uMaxFrames;
+            if (tid==0u) { wgtOut[base] = 1.0; }
             int fi=uGridSize.x*uGridSize.y*2;
             int baseBi = uFrameBase + (int(ty) * uGridSize.x + int(tx)) * 2;
-            vec3 w=vec3(1.0);
             float wl = max(uWhiteLevel, 1.0);
             for (int f=1; f<uNumFrames; f++) {
                 int bi = baseBi + (f-1)*fi;
                 int ox = offs[bi];
                 int oy = offs[bi+1];
                 int ahx=clamp(hx+ox,0,sz.x-1); int ahy=clamp(hy+oy,0,sz.y-1);
-                float av;
-                if (f==1) av=texelFetch(uHalf1,ivec2(ahx,ahy),0).r;
-                else if (f==2) av=texelFetch(uHalf2,ivec2(ahx,ahy),0).r;
-                else av=texelFetch(uHalf3,ivec2(ahx,ahy),0).r;
+                float av = texelFetch(uHalf[f], ivec2(ahx, ahy), 0).r;
                 sL1[tid] = valid ? abs(rv - av) : 0.0;
                 memoryBarrierShared(); barrier();
                 for (int s=128; s>0; s>>=1) {
@@ -610,21 +599,23 @@ class GpuAlignMerge {
                     float avg=sL1[0]/256.0;
                     float nd=max(1.0, avg*wl/8.0-10.0/8.0);
                     float wgt = (nd <= (300.0-10.0)/8.0) ? min(1.0/nd,10.0) : 0.0;
-                    if (f==1) w.r=wgt; else if (f==2) w.g=wgt; else w.b=wgt;
+                    wgtOut[base + f] = wgt;
                 }
                 memoryBarrierShared(); barrier();
             }
-            if (tid==0u) imageStore(uWt,ivec2(int(tx),int(ty)),vec4(w,0.0));
         }
     """.trimIndent()
 
     private val CS_MERGE = """
         #version 310 es
+        #extension GL_EXT_gpu_shader5 : require
         precision highp usampler2D; precision highp int;
         layout(local_size_x=16,local_size_y=16) in;
-        uniform highp usampler2D uTex[4]; uniform sampler2D uWeightTex;
-        uniform ivec2 uImgSize; uniform ivec2 uGridSize; uniform int uNumFrames;
+        const int _MAX_FRAMES_ = $MAX_FRAMES;
+        uniform highp usampler2D uTex[_MAX_FRAMES_]; uniform ivec2 uImgSize; uniform ivec2 uGridSize;
+        uniform int uNumFrames; uniform int uMaxFrames;
         layout(std430,binding=3) readonly buffer Off { int offs[]; };
+        layout(std430,binding=$SBO_WEIGHT_BINDING) buffer WgtBuf { float wgtOut[]; };
         layout(std430,binding=4) writeonly buffer OutBuf { uint outData[]; };
         float hann(int i) {
             float a=3.14159265*(float(i)+0.5)/64.0;
@@ -644,23 +635,18 @@ class GpuAlignMerge {
                 int tx=(i&1)==0?c0x:c1x, ty=i<2?c0y:c1y;
                 float wx=(i&1)==0?wx0:wx1, wy=i<2?wy0:wy1;
                 int bi=(ty*uGridSize.x+tx)*2;
-                int ox=(uNumFrames>1)?offs[0*fi+bi]*2:0, oy=(uNumFrames>1)?offs[0*fi+bi+1]*2:0;
-                int ox2=(uNumFrames>2)?offs[1*fi+bi]*2:0, oy2=(uNumFrames>2)?offs[1*fi+bi+1]*2:0;
-                int ox3=(uNumFrames>3)?offs[2*fi+bi]*2:0, oy3=(uNumFrames>3)?offs[2*fi+bi+1]*2:0;
-                vec3 w=texelFetch(uWeightTex,ivec2(tx,ty),0).rgb;
+                int base = (ty * uGridSize.x + tx) * uMaxFrames;
                 float r0 = float(texelFetch(uTex[0], clamp(p, ivec2(0), uImgSize-1), 0).r) / 65535.0;
                 float sum=r0; float tw=1.0;
-                if (uNumFrames>1&&w.r>0.001) {
-                    sum+=float(texelFetch(uTex[1],clamp(p+ivec2(ox,oy),ivec2(0),uImgSize-1),0).r)/65535.0*w.r;
-                    tw+=w.r;
-                }
-                if (uNumFrames>2&&w.g>0.001) {
-                    sum+=float(texelFetch(uTex[2],clamp(p+ivec2(ox2,oy2),ivec2(0),uImgSize-1),0).r)/65535.0*w.g;
-                    tw+=w.g;
-                }
-                if (uNumFrames>3&&w.b>0.001) {
-                    sum+=float(texelFetch(uTex[3],clamp(p+ivec2(ox3,oy3),ivec2(0),uImgSize-1),0).r)/65535.0*w.b;
-                    tw+=w.b;
+                for (int f=1; f<uNumFrames; f++) {
+                    float w = wgtOut[base + f];
+                    if (w > 0.001) {
+                        int ofsIdx = (f-1) * fi + bi;
+                        int ax = offs[ofsIdx] * 2;
+                        int ay = offs[ofsIdx + 1] * 2;
+                        sum += float(texelFetch(uTex[f], clamp(p+ivec2(ax,ay), ivec2(0), uImgSize-1), 0).r) / 65535.0 * w;
+                        tw += w;
+                    }
                 }
                 res+=wx*wy*(sum/tw);
             }

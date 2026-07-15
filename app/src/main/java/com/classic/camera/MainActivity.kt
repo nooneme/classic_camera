@@ -337,21 +337,71 @@ class MainActivity : AppCompatActivity() {
     /** 显示设置弹窗。 */
     private fun showSettingsDialog() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        fun applyDng(enabled: Boolean) {
+            prefs.edit().putBoolean("save_dng", enabled).apply()
+            cameraController?.saveDng = enabled
+        }
+
+        fun applyMultiFrame(enabled: Boolean, count: Int) {
+            val n = if (enabled) count.coerceIn(2, 8) else 1
+            prefs.edit().putBoolean("multi_frame", enabled).apply()
+            prefs.edit().putInt("multi_frame_count", n).apply()
+            cameraController?.multiFrameCount = n
+        }
+
         val saveDng = prefs.getBoolean("save_dng", true)
         val multiFrame = prefs.getBoolean("multi_frame", true)
+        val multiFrameCount = prefs.getInt("multi_frame_count", 4)
 
         val switchDng = Switch(this).apply {
             isChecked = saveDng
-            text = "同时保存原始 DNG"
+            text = "保存 DNG"
             textSize = 16f
             setPadding(48, 24, 48, 24)
+            setOnCheckedChangeListener { _, isChecked -> applyDng(isChecked) }
         }
 
         val switchMultiFrame = Switch(this).apply {
             isChecked = multiFrame
-            text = "多帧融合 (4帧合成)"
+            text = "多帧降噪"
             textSize = 16f
-            setPadding(48, 24, 48, 24)
+            setPadding(48, 16, 48, 8)
+        }
+
+        val tvFrameCount = TextView(this).apply {
+            text = "合成帧数: $multiFrameCount"
+            textSize = 15f
+            setPadding(48, 8, 48, 4)
+            visibility = if (multiFrame) android.view.View.VISIBLE else android.view.View.GONE
+        }
+
+        val sbFrameCount = SeekBar(this).apply {
+            max = 6
+            progress = (multiFrameCount - 2).coerceIn(0, 6)
+            setPadding(48, 0, 48, 16)
+            visibility = if (multiFrame) android.view.View.VISIBLE else android.view.View.GONE
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    tvFrameCount.text = "合成帧数: ${progress + 2}"
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar) {
+                    applyMultiFrame(true, progress + 2)
+                }
+            })
+        }
+
+        switchMultiFrame.setOnCheckedChangeListener { _, isChecked ->
+            val vis = if (isChecked) android.view.View.VISIBLE else android.view.View.GONE
+            sbFrameCount.visibility = vis
+            tvFrameCount.visibility = vis
+            if (isChecked) {
+                tvFrameCount.text = "合成帧数: ${sbFrameCount.progress + 2}"
+                applyMultiFrame(true, sbFrameCount.progress + 2)
+            } else {
+                applyMultiFrame(false, 0)
+            }
         }
 
         val layout = LinearLayout(this).apply {
@@ -360,15 +410,12 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(switchDng)
         layout.addView(switchMultiFrame)
+        layout.addView(tvFrameCount)
+        layout.addView(sbFrameCount)
 
         AlertDialog.Builder(this)
             .setView(layout)
-            .setPositiveButton("完成") { _, _ ->
-                prefs.edit().putBoolean("save_dng", switchDng.isChecked).apply()
-                prefs.edit().putBoolean("multi_frame", switchMultiFrame.isChecked).apply()
-                cameraController?.saveDng = switchDng.isChecked
-                cameraController?.multiFrameCount = if (switchMultiFrame.isChecked) 4 else 1
-            }
+            .setPositiveButton("完成", null)
             .show()
     }
 
@@ -513,7 +560,8 @@ class MainActivity : AppCompatActivity() {
             cameraController = it
             it.manualController = manualController  // 注入手动曝光控制器
             it.saveDng = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("save_dng", true)
-            it.multiFrameCount = if (getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("multi_frame", true)) 4 else 1
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            it.multiFrameCount = if (prefs.getBoolean("multi_frame", true)) prefs.getInt("multi_frame_count", 4).coerceIn(2, 8) else 1
             // GPU JPEG 处理器：通过 queueEvent 在 GL 线程渲染，CountDownLatch 同步等待
             // 返回 null 则跳过 JPEG 保存
             it.gpuJpegProcessor = { rawShorts, w, h, blR, blG, blB, wl, wbR, wbG, wbB, ccm, cfa ->
