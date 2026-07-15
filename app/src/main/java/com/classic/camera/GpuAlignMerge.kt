@@ -31,6 +31,10 @@ class GpuAlignMerge {
     private var progWeights = 0
     private var progMerge = 0
 
+    // 传感器的白电平（用于金字塔归一化）。外部通过 process() 传入。
+    // 默认 65535（16-bit 满量程），实际值由 process() 参数覆盖。
+    private var sensorWhiteLevel: Float = 65535.0f
+
     private val frameTex = IntArray(MAX_FRAMES)
     private val pyrTex = IntArray(MAX_FRAMES * 3)
     private var fbo = 0
@@ -126,39 +130,18 @@ class GpuAlignMerge {
     /**
      * 对齐 + 融合多帧为单帧 ShortArray。
      * 返回 null 表示失败（调用者应回退 CPU）。
+     * @param whiteLevel 传感器的白电平（如 1023 或 4095），用于金字塔归一化。
      */
-    fun process(frames: Array<ShortArray>, w: Int, h: Int, numTx: Int, numTy: Int): ShortArray {
+    fun process(frames: Array<ShortArray>, w: Int, h: Int, numTx: Int, numTy: Int, whiteLevel: Float = 65535.0f): ShortArray {
         if (!initialized) {
             Log.w(TAG, "process: not initialized, calling init() now")
             init()
         }
         if (!initialized) throw IllegalStateException("GpuAlignMerge init() failed")
+        sensorWhiteLevel = whiteLevel
         val nf = minOf(frames.size, MAX_FRAMES)
         try {
             uploadFrames(frames, w, h, nf)
-
-            // ================= DEBUG STEP 6 START =================
-            // 验证上传到 GPU 的 frameTex 是否正常
-            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo)
-            GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, frameTex[0], 0)
-
-            val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
-            if (status == GLES30.GL_FRAMEBUFFER_COMPLETE) {
-                // 注意：因为 frameTex 是 GL_R16UI 格式，读取时要用 GL_RED_INTEGER 和 GL_UNSIGNED_SHORT
-                val pixels = ShortArray(1)
-                GLES30.glReadPixels(0, 0, 1, 1, GL_RED_INTEGER, GLES30.GL_UNSIGNED_SHORT, java.nio.ShortBuffer.wrap(pixels))
-                Log.d(TAG, "FrameTex[0] Pixel(0,0) = ${pixels[0]}")
-
-                // 检查是否有 GL 错误
-                val err = GLES30.glGetError()
-                if (err != GLES30.GL_NO_ERROR) {
-                    Log.e(TAG, "GL Error after reading FrameTex: 0x${Integer.toHexString(err)}")
-                }
-            } else {
-                Log.e(TAG, "FBO Incomplete for FrameTex: $status")
-            }
-            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-            // ================= DEBUG STEP 6 END =================
 
             buildPyramids(w, h, nf)
             alignAllFrames(w, h, nf, numTx, numTy)
@@ -206,13 +189,6 @@ class GpuAlignMerge {
     // ===================== 实现 =====================
 
     private fun uploadFrames(frames: Array<ShortArray>, w: Int, h: Int, nf: Int) {
-        // ================= DEBUG STEP 5 START =================
-        // 检查第一帧的第一个像素和平均值
-        var sum = 0L
-        for (i in 0 until minOf(100, frames[0].size)) sum += frames[0][i].toLong()
-        Log.d(TAG, "Input Check: FirstPixel=${frames[0][0]}, First100Avg=${sum / 100}")
-        // ================= DEBUG STEP 5 END =================
-
         val count = w * h
         val byteCount = count * 2
         val bb = reuseByteBuf?.let { if (it.capacity() >= byteCount) { it.clear(); it.limit(byteCount); it } else null }
@@ -246,22 +222,19 @@ class GpuAlignMerge {
         val ntx2 = (pyrW2 + 15) / 16; val nty2 = (pyrH2 + 15) / 16
         for (f in 0 until nf) {
             GLES31.glUseProgram(progCSBoxDown2)
-            checkGLError("UseProgram BoxDown2")
 
             GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, frameTex[f])
 
             GLES31.glUniform1i(GLES31.glGetUniformLocation(progCSBoxDown2, "uSrc"), 0)
             GLES31.glUniform2i(GLES31.glGetUniformLocation(progCSBoxDown2, "uSrcSize"), w, h)
+            GLES31.glUniform1f(GLES31.glGetUniformLocation(progCSBoxDown2, "uWhiteLevel"), sensorWhiteLevel)
 
             GLES31.glBindImageTexture(0, pyrTex[pt(f, 0)], 0, false, 0, GLES31.GL_WRITE_ONLY, GLES30.GL_RGBA8)
-            checkGLError("BindImageTexture BoxDown2")
 
             GLES31.glDispatchCompute(ntx0, nty0, 1)
-            checkGLError("DispatchCompute BoxDown2")
 
             GLES31.glMemoryBarrier(GLES31.GL_TEXTURE_FETCH_BARRIER_BIT or GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)
-            checkGLError("MemoryBarrier BoxDown2")
 
             GLES31.glUseProgram(progCSGaussDown4)
             GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
@@ -280,33 +253,7 @@ class GpuAlignMerge {
             GLES31.glMemoryBarrier(GLES31.GL_TEXTURE_FETCH_BARRIER_BIT or GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)
         }
 
-        // ================= DEBUG STEP 4 START =================
-        // 检查金字塔 Level 0 的中心像素值
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pyrTex[pt(0, 0)])
 
-        // 使用 glGetTexImage 读取纹理 (注意：GLES30 没有 glGetTexImage，需要用 FBO 或读取 PBO，
-        // 但最简单的 debug 方法是用 glGetTexLevelParameter 检查是否 complete，
-        // 或者重新绑定回 FBO 读取一个像素。这里用简易方法：利用 ReadPixels)
-
-        // 1. 绑定 FBO 并 Attach 纹理
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo)
-        GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, pyrTex[pt(0, 0)], 0)
-
-        val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
-        if (status == GLES30.GL_FRAMEBUFFER_COMPLETE) {
-            // 修改点：用 ByteArray 读取 GL_RGBA8 格式
-            val pixels = ByteArray(4) // RGBA 需要 4 个字节
-            GLES30.glReadPixels(0, 0, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, java.nio.ByteBuffer.wrap(pixels))
-
-            // 手动把第一个字节转为 0.0-1.0 的 float 显示
-            val valFloat = (pixels[0].toInt() and 0xFF) / 255.0f
-            Log.d(TAG, "Pyramid L0 Pixel(0,0) R=$valFloat")
-        } else {
-            Log.e(TAG, "Framebuffer Incomplete for Pyramid Debug: $status")
-        }
-
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-        // ================= DEBUG STEP 4 END =================
     }
 
     private fun alignAllFrames(w: Int, h: Int, nf: Int, numTx: Int, numTy: Int) {
@@ -398,42 +345,29 @@ class GpuAlignMerge {
             GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
         }
 
-        // ================= DEBUG STEP 1 START =================
-        // 读回 level0SSBO 检查偏移量
+        // === DEBUG: 读回 level0SSBO 前几个偏移量 ===
         GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, level0SSBO)
         val ssboSize = (nf - 1) * nt0x * nt0y * 2 * 4
-        val ssboBuffer = GLES31.glMapBufferRange(GLES31.GL_SHADER_STORAGE_BUFFER, 0, ssboSize, GLES31.GL_MAP_READ_BIT) as java.nio.ByteBuffer
-        ssboBuffer.order(ByteOrder.nativeOrder())
-        val intBuf = ssboBuffer.asIntBuffer()
-
-        var totalOffsetX = 0
-        var totalOffsetY = 0
-        var count = 0
-
-        // 遍历所有副帧（Frame 1, 2, 3）
-        for (f in 1 until nf) {
-            val baseIndex = (f - 1) * nt0x * nt0y * 2
-            // 仅打印第一个 Tile 的偏移量作为样本
-            val offX = intBuf.get(baseIndex)
-            val offY = intBuf.get(baseIndex + 1)
-            Log.d(TAG, "Align Frame[$f] Sample Offset: dx=$offX, dy=$offY")
-
-            // 统计平均偏移量绝对值
-            for (i in 0 until nt0x * nt0y) {
-                val idx = baseIndex + i * 2
-                if (idx + 1 < intBuf.capacity()) {
-                    totalOffsetX += kotlin.math.abs(intBuf.get(idx))
-                    totalOffsetY += kotlin.math.abs(intBuf.get(idx + 1))
-                    count++
+        val mapped = GLES31.glMapBufferRange(GLES31.GL_SHADER_STORAGE_BUFFER, 0, ssboSize, GLES31.GL_MAP_READ_BIT)
+        if (mapped is java.nio.ByteBuffer) {
+            val ssboBuffer = mapped as java.nio.ByteBuffer
+            ssboBuffer.order(ByteOrder.nativeOrder())
+            val intBuf = ssboBuffer.asIntBuffer()
+            var totalOffsetX = 0; var totalOffsetY = 0; var count = 0
+            for (f in 1 until nf) {
+                val baseIndex = (f - 1) * nt0x * nt0y * 2
+                for (i in 0 until minOf(nt0x * nt0y, 100)) {
+                    val idx = baseIndex + i * 2
+                    if (idx + 1 < intBuf.capacity()) {
+                        totalOffsetX += kotlin.math.abs(intBuf.get(idx))
+                        totalOffsetY += kotlin.math.abs(intBuf.get(idx + 1))
+                        count++
+                    }
                 }
             }
+            Log.d(TAG, "Align offset avg: dx=${totalOffsetX / maxOf(1, count)}, dy=${totalOffsetY / maxOf(1, count)} (sample=$count tiles)")
+            GLES31.glUnmapBuffer(GLES31.GL_SHADER_STORAGE_BUFFER)
         }
-        GLES31.glUnmapBuffer(GLES31.GL_SHADER_STORAGE_BUFFER)
-        if (count > 0) {
-            Log.d(TAG, "Align Average Abs Offset: dx=${totalOffsetX / count}, dy=${totalOffsetY / count}")
-        }
-        // ================= DEBUG STEP 1 END =================
-
         GLES30.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
     }
 
@@ -457,8 +391,10 @@ class GpuAlignMerge {
         GLES31.glBindImageTexture(8, weightTex, 0, false, 0, GLES31.GL_WRITE_ONLY, GLES30.GL_RGBA8)
         GLES31.glUniform1i(GLES31.glGetUniformLocation(progWeights, "uNumFrames"), nf)
         GLES31.glUniform1i(GLES31.glGetUniformLocation(progWeights, "uFrameBase"), 0)
+            GLES31.glUniform1f(GLES31.glGetUniformLocation(progWeights, "uWhiteLevel"), sensorWhiteLevel)
         GLES31.glDispatchCompute(numTx, numTy, 1)
         GLES31.glMemoryBarrier(GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
+
     }
 
     private fun merge(w: Int, h: Int, nf: Int, numTx: Int, numTy: Int): ShortArray {
@@ -499,7 +435,6 @@ class GpuAlignMerge {
         for (i in 0 until w * h) {
             result[i] = intBuf.get(i).toShort()
         }
-
         GLES30.glUnmapBuffer(GLES31.GL_SHADER_STORAGE_BUFFER)
         GLES30.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, 0)
 
@@ -557,19 +492,19 @@ class GpuAlignMerge {
         layout(local_size_x=16,local_size_y=16) in;
         uniform highp usampler2D uSrc;
         uniform ivec2 uSrcSize;
-        // 修改点：layout 改为 rgba8
+        uniform float uWhiteLevel;
         layout(rgba8, binding=0) writeonly uniform highp image2D uDst;
         void main() {
             ivec2 p = ivec2(gl_GlobalInvocationID.xy);
             ivec2 base = p * 2;
             float sum = 0.0;
             int cnt = 0;
+            float wl = max(uWhiteLevel, 1.0);
             for (int dy = 0; dy < 2; dy++) {
                 for (int dx = 0; dx < 2; dx++) {
                     ivec2 srcPos = base + ivec2(dx, dy);
                     if (srcPos.x < uSrcSize.x && srcPos.y < uSrcSize.y) {
-                        // 修改点：读取后除以 255.0，变成 0.0-1.0 的浮点数
-                        sum += float(texelFetch(uSrc, srcPos, 0).r) / 255.0;
+                        sum += float(texelFetch(uSrc, srcPos, 0).r) / wl;
                         cnt++;
                     }
                 }
@@ -663,6 +598,7 @@ class GpuAlignMerge {
         uniform sampler2D uHalf1;
         uniform sampler2D uHalf2;
         uniform sampler2D uHalf3;
+        uniform float uWhiteLevel;
         layout(std430, binding=2) buffer Off { int offs[]; };
         layout(rgba8, binding=8) writeonly uniform image2D uWt;
         uniform ivec2 uGridSize; uniform int uNumFrames; uniform int uFrameBase;
@@ -678,6 +614,7 @@ class GpuAlignMerge {
             int fi=uGridSize.x*uGridSize.y*2;
             int baseBi = uFrameBase + (int(ty) * uGridSize.x + int(tx)) * 2;
             vec3 w=vec3(1.0);
+            float wl = max(uWhiteLevel, 1.0);
             for (int f=1; f<uNumFrames; f++) {
                 int bi = baseBi + (f-1)*fi;
                 int ox = offs[bi];
@@ -695,7 +632,7 @@ class GpuAlignMerge {
                 }
                 if (tid==0u) {
                     float avg=sL1[0]/256.0;
-                    float nd=max(1.0, avg*65535.0/8.0-10.0/8.0);
+                    float nd=max(1.0, avg*wl/8.0-10.0/8.0);
                     float wgt = (nd <= (300.0-10.0)/8.0) ? min(1.0/nd,10.0) : 0.0;
                     if (f==1) w.r=wgt; else if (f==2) w.g=wgt; else w.b=wgt;
                 }

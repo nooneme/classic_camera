@@ -541,13 +541,13 @@ class MainActivity : AppCompatActivity() {
             // GPU 多帧融合处理器（在 GL 线程运行，CountDownLatch 同步）
             val aligner = gpuAlignMerge
             if (aligner != null) {
-                it.gpuMultiFrameProcessor = { frames, w, h, numTx, numTy ->
+                it.gpuMultiFrameProcessor = { frames, w, h, numTx, numTy, wl ->
                     val latch = CountDownLatch(1)
                     var result: ShortArray? = null
                     var error: Exception? = null
                     glSurfaceView.queueEvent {
                         try {
-                            result = aligner.process(frames, w, h, numTx, numTy)
+                            result = aligner.process(frames, w, h, numTx, numTy, wl)
                         } catch (e: Exception) {
                             Log.e(LOG_TAG, "GPU multi-frame failed", e)
                             error = e

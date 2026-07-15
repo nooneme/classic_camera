@@ -106,7 +106,8 @@ class CameraController(
     var gpuMultiFrameProcessor: ((
         frames: Array<ShortArray>,
         w: Int, h: Int,
-        numTx: Int, numTy: Int
+        numTx: Int, numTy: Int,
+        whiteLevel: Float
     ) -> ShortArray)? = null
 
     // ---- 手动曝光控制 ----
@@ -640,7 +641,8 @@ class CameraController(
                 val tAlignStart = System.nanoTime()
 
                 val gpu = gpuMultiFrameProcessor ?: throw IllegalStateException("gpuMultiFrameProcessor not set")
-                val merged = gpu(frameArr, w, h, numTx, numTy)
+                val snapshotWl = captureSnapshotWhiteLevel ?: 1023f
+                val merged = gpu(frameArr, w, h, numTx, numTy, snapshotWl)
                 val tGpuDone = System.nanoTime()
                 Log.d(LOG_TAG, String.format("multiFrame: GPU path took %.1fms (result %d shorts)",
                     (tGpuDone - tAlignStart) / 1_000_000.0, merged.size))
@@ -648,7 +650,7 @@ class CameraController(
                 // === 复用单帧 gpuJpegProcessor 渲染 Bitmap ===
                 val lens = currentLens
                 val bl = captureSnapshotBlackLevel ?: parseBlackLevel(lens?.blackLevelPattern ?: "") ?: floatArrayOf(0f, 0f, 0f)
-                val wl = captureSnapshotWhiteLevel ?: (lens?.whiteLevel?.toFloat() ?: 1023f)
+                val jpegWl = captureSnapshotWhiteLevel ?: (lens?.whiteLevel?.toFloat() ?: 1023f)
                 val wbGain = captureSnapshotWB ?: floatArrayOf(1f, 1f, 1f)
                 val ccm = lens?.forwardMatrix1?.let {
                     val parsed = parseColorMatrix(it)
@@ -662,7 +664,7 @@ class CameraController(
                 if (processor != null) {
                     val tJpegStart = System.nanoTime()
                     val bitmap = processor(merged, w, h,
-                        bl[0], bl[1], bl[2], wl,
+                        bl[0], bl[1], bl[2], jpegWl,
                         wbGain[0], wbGain[1], wbGain[2],
                         ccm, cfa)
                     if (bitmap != null) {
