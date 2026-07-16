@@ -547,9 +547,9 @@ class CameraController(
                     val dynBl = result.get(CaptureResult.SENSOR_DYNAMIC_BLACK_LEVEL)
                     if (dynBl != null && dynBl.size >= 4) {
                         lastDynamicBlackLevel = floatArrayOf(
-                            dynBl[0].toFloat() + 2f,
-                            ((dynBl[1] + dynBl[2]) * 0.5).toFloat() + 2f,
-                            dynBl[3].toFloat() + 2f
+                            dynBl[0].toFloat(),
+                            ((dynBl[1] + dynBl[2]) * 0.5).toFloat(),
+                            dynBl[3].toFloat()
                         )
                     }
                     // 更新动态白电平（帧级别，优于静态 SensorCharacteristics 值）

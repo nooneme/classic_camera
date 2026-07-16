@@ -138,6 +138,10 @@ class MainActivity : AppCompatActivity() {
             }
         })
         pipeline = RawPipeline()
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).also {
+            pipeline?.blackLevelOffset = it.getInt("black_level_offset", 0).toFloat()
+            pipeline?.whiteLevelOffset = it.getInt("white_level_offset", 0).toFloat()
+        }
         glSurfaceView.setRenderer(pipeline)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
 
@@ -353,6 +357,8 @@ class MainActivity : AppCompatActivity() {
         val saveDng = prefs.getBoolean("save_dng", true)
         val multiFrame = prefs.getBoolean("multi_frame", true)
         val multiFrameCount = prefs.getInt("multi_frame_count", 4)
+        val blOffset = prefs.getInt("black_level_offset", 0)
+        val wlOffset = prefs.getInt("white_level_offset", 0)
 
         val switchDng = Switch(this).apply {
             isChecked = saveDng
@@ -412,6 +418,59 @@ class MainActivity : AppCompatActivity() {
         layout.addView(switchMultiFrame)
         layout.addView(tvFrameCount)
         layout.addView(sbFrameCount)
+
+        // ---- 黑电平补偿 ----
+        val tvBlOffset = TextView(this).apply {
+            text = "黑电平补偿: ${blOffset}"
+            textSize = 15f
+            setPadding(48, 16, 48, 4)
+        }
+        val sbBlOffset = SeekBar(this).apply {
+            max = 64
+            progress = (blOffset + 32).coerceIn(0, 64)
+            setPadding(48, 0, 48, 16)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    val offset = progress - 32
+                    tvBlOffset.text = "黑电平补偿: ${if (offset >= 0) "+$offset" else "$offset"}"
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar) {
+                    val offset = seekBar.progress - 32
+                    prefs.edit().putInt("black_level_offset", offset).apply()
+                    glSurfaceView.queueEvent { pipeline?.blackLevelOffset = offset.toFloat() }
+                }
+            })
+        }
+
+        // ---- 白电平补偿 ----
+        val tvWlOffset = TextView(this).apply {
+            text = "白电平补偿: ${wlOffset}"
+            textSize = 15f
+            setPadding(48, 8, 48, 4)
+        }
+        val sbWlOffset = SeekBar(this).apply {
+            max = 512
+            progress = (wlOffset + 256).coerceIn(0, 512)
+            setPadding(48, 0, 48, 16)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    val offset = progress - 256
+                    tvWlOffset.text = "白电平补偿: ${if (offset >= 0) "+$offset" else "$offset"}"
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar) {
+                    val offset = seekBar.progress - 256
+                    prefs.edit().putInt("white_level_offset", offset).apply()
+                    glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = offset.toFloat() }
+                }
+            })
+        }
+
+        layout.addView(tvBlOffset)
+        layout.addView(sbBlOffset)
+        layout.addView(tvWlOffset)
+        layout.addView(sbWlOffset)
 
         AlertDialog.Builder(this)
             .setView(layout)

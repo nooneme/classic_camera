@@ -31,6 +31,8 @@ class RawPipeline : GLSurfaceView.Renderer {
     var blackLevelG = 0.0f
     var blackLevelB = 0.0f
     var whiteLevel = 1023f
+    @Volatile var blackLevelOffset = 0f
+    @Volatile var whiteLevelOffset = 0f
     var wbR = 1f; var wbG = 1f; var wbB = 1f
     var ccm = FloatArray(9) { if (it % 4 == 0) 1f else 0f }
     var orientation: Int = 90
@@ -199,8 +201,8 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texId)
         GLES30.glUniform1i(u.uRawTex, 0)
         if (u.uRawSize >= 0) GLES30.glUniform2f(u.uRawSize, rawW.toFloat(), rawH.toFloat())
-        GLES30.glUniform3f(u.uBlackLevel, blackLevelR * inv65535, blackLevelG * inv65535, blackLevelB * inv65535)
-        GLES30.glUniform1f(u.uWhiteLevel, whiteLevel * inv65535)
+        GLES30.glUniform3f(u.uBlackLevel, (blackLevelR + blackLevelOffset) * inv65535, (blackLevelG + blackLevelOffset) * inv65535, (blackLevelB + blackLevelOffset) * inv65535)
+        GLES30.glUniform1f(u.uWhiteLevel, (whiteLevel + whiteLevelOffset) * inv65535)
         GLES30.glUniform3f(u.uWBGain, wbR, wbG, wbB)
         GLES30.glUniformMatrix3fv(u.uCCM, 1, false, ccm, 0)
         val cfaoX = if (cfaType == 1 || cfaType == 3) 1f else 0f
