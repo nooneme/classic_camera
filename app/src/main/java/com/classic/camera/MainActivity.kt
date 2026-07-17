@@ -189,7 +189,6 @@ class MainActivity : AppCompatActivity() {
 
                     if (useMulti) {
                         cameraController?.startMultiCapture { dngName, jpgName ->
-                            stopCaptureVibration()
                             runOnUiThread {
                                 val msg = if (dngName.isNotEmpty())
                                     "多帧合成: $dngName 和 $jpgName → Pictures/gufa/"
@@ -200,7 +199,6 @@ class MainActivity : AppCompatActivity() {
                         }
                     } else {
                         cameraController?.capture { dngName, jpgName, _ ->
-                            stopCaptureVibration()
                             runOnUiThread {
                                 val msg = if (dngName.isNotEmpty())
                                     "$dngName 和 $jpgName → Pictures/gufa/"
@@ -622,6 +620,7 @@ class MainActivity : AppCompatActivity() {
         val controller = cameraController ?: CameraController(this, cameraManager, backgroundHandler!!).also {
             cameraController = it
             it.manualController = manualController  // 注入手动曝光控制器
+            it.onExposureComplete = { stopCaptureVibration() }
             it.saveDng = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("save_dng", true)
             val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             it.multiFrameCount = if (prefs.getBoolean("multi_frame", true)) prefs.getInt("multi_frame_count", 4).coerceIn(2, 8) else 1

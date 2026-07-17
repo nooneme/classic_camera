@@ -100,6 +100,9 @@ class CameraController(
     private var firstFrameArrivedNs = 0L
     private var lastFrameArrivedNs = 0L
 
+    /** 曝光结束回调（单帧 Image 到达 / 多帧最后一帧到达时触发，用于停止快门连震）。 */
+    var onExposureComplete: (() -> Unit)? = null
+
     /** 设置开关：拍照时是否保存 DNG（由设置界面控制）。 */
     var saveDng: Boolean = true
 
@@ -212,8 +215,10 @@ class CameraController(
                 multiFrameBuffers.add(bayer)
                 if (multiFrameBuffers.size >= multiFrameCount) {
                     multiFrameCapturing = false
+                    // 最后一帧曝光结束，停止快门连震
+                    onExposureComplete?.invoke()
                     lastFrameArrivedNs = tFrameArrived
-                    Log.d(LOG_TAG, String.format("multiFrame: all %d frames captured in %.0fms (extractRawShorts total overhead excluded)",
+                    Log.d(LOG_TAG, String.format("multiFrame: all %d frames captured in %.0fms (extractRawShorts total overhead included)",
                         multiFrameCount, (lastFrameArrivedNs - captureStartNs) / 1_000_000.0))
                     processMultiFrame()
                 }
@@ -741,6 +746,9 @@ class CameraController(
 
     /** Image 到齐后写 DNG/JPG（只等 Image，不再等待独立的 CaptureResult）。 */
     private fun tryWriteDng() {
+        // 曝光结束，停止快门连震
+        onExposureComplete?.invoke()
+
         val img = pendingImage ?: return
         val characteristics = captureCharacteristics ?: return
         val cb = captureCallback ?: return
