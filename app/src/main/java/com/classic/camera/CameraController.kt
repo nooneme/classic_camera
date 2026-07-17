@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
@@ -375,6 +376,11 @@ class CameraController(
 
     @Volatile private var lastWBGain = floatArrayOf(1f, 1f, 1f)
 
+    // ---- LSC 镜头阴影校正增益图 ----
+    @Volatile var lscGainMap: FloatArray? = null
+    @Volatile var lscGridCols: Int = 0
+    @Volatile var lscGridRows: Int = 0
+
     // ---- 半自动 AE 反馈环状态 ----
     private var autoAeFrameCount = 0
     /** 诊断计数器，每 60 帧打一次日志。 */
@@ -503,6 +509,8 @@ class CameraController(
             }
             val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
             builder.addTarget(reader.surface)
+            // 请求帧级 LSC 增益图（HAL 默认 SHADING_MODE_FAST 会计算但不对 RAW 应用）
+            builder.set(CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE, CameraMetadata.STATISTICS_LENS_SHADING_MAP_MODE_ON)
             val cb = object : CameraCaptureSession.CaptureCallback() {
                 override fun onCaptureCompleted(s: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
                     super.onCaptureCompleted(s, request, result)
@@ -556,6 +564,38 @@ class CameraController(
                     val dynWl = result.get(CaptureResult.SENSOR_DYNAMIC_WHITE_LEVEL)
                     if (dynWl != null && dynWl > 0) {
                         lastDynamicWhiteLevel = dynWl.toFloat()
+                    }
+                    // LSC 镜头阴影校正增益图
+                    val lscResult = result.get(CaptureResult.STATISTICS_LENS_SHADING_CORRECTION_MAP)
+                    if (lscResult != null) {
+                        val cols = lscResult.columnCount
+                        val rows = lscResult.rowCount
+                        if (cols > 0 && rows > 0) {
+                            lscGridCols = cols
+                            lscGridRows = rows
+                            val gains = FloatArray(cols * rows * 4)
+                            for (r in 0 until rows) {
+                                for (c in 0 until cols) {
+                                    val idx = (r * cols + c) * 4
+                                    gains[idx] = lscResult.getGainFactor(0, c, r)      // R
+                                    gains[idx + 1] = (lscResult.getGainFactor(1, c, r) +
+                                        lscResult.getGainFactor(2, c, r)) * 0.5f       // G (avg of G_even, G_odd)
+                                    gains[idx + 2] = lscResult.getGainFactor(3, c, r)  // B
+                                    gains[idx + 3] = 1f
+                                }
+                            }
+                            lscGainMap = gains
+                            // 日志：打印完整增益矩阵
+                            val sb = StringBuilder("LSC gain map ${cols}x${rows}:\n")
+                            for (r in 0 until rows) {
+                                for (c in 0 until cols) {
+                                    val idx = (r * cols + c) * 4
+                                    sb.append("[%.4f,%.4f,%.4f] ".format(gains[idx], gains[idx+1], gains[idx+2]))
+                                }
+                                sb.append('\n')
+                            }
+                            Log.d(LOG_TAG, sb.toString())
+                        }
                     }
                     lastRepeatingResult = result
                     rawFrameCount++
@@ -912,6 +952,7 @@ class CameraController(
         try {
             val builder = dev.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
             builder.addTarget(reader.surface)
+            builder.set(CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE, CameraMetadata.STATISTICS_LENS_SHADING_MAP_MODE_ON)
             manualController?.applyTo(builder)
             s.setRepeatingRequest(builder.build(), cb, bgHandler)
         } catch (e: Exception) {

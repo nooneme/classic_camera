@@ -14,6 +14,8 @@ class RawPipeline : GLSurfaceView.Renderer {
 
     companion object {
         private const val GL_R16 = 0x822A  // R16F, used with GL_FLOAT
+        private const val GL_RGBA16F = 0x881A
+        private const val GL_HALF_FLOAT = 0x140B
     }
 
     // ---- 供外部更新参数 ----
@@ -56,6 +58,8 @@ class RawPipeline : GLSurfaceView.Renderer {
         var uOrientation = 0; var uMirror = 0
         // LUT
         var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0
+        // LSC
+        var uLscGainTex = 0; var uLscGridSize = 0; var uEnableLsc = 0
 
         fun lookupBayer() {
             aPos = GLES30.glGetAttribLocation(id, "aPos")
@@ -70,6 +74,9 @@ class RawPipeline : GLSurfaceView.Renderer {
             uCFAOffset = GLES30.glGetUniformLocation(id, "uCFAOffset")
             uOrientation = GLES30.glGetUniformLocation(id, "uOrientation")
             uMirror = GLES30.glGetUniformLocation(id, "uMirror")
+            uLscGainTex = GLES30.glGetUniformLocation(id, "uLscGainTex")
+            uLscGridSize = GLES30.glGetUniformLocation(id, "uLscGridSize")
+            uEnableLsc = GLES30.glGetUniformLocation(id, "uEnableLsc")
             lookupLut()
         }
 
@@ -90,6 +97,13 @@ class RawPipeline : GLSurfaceView.Renderer {
     @Volatile var lutFloatArray: FloatArray? = null
     private var lutTextureId = 0
     private var lutEnabled = false
+
+    // ---- LSC 镜头阴影校正 ----
+    @Volatile var lscGainMap: FloatArray? = null
+    @Volatile var lscGridCols: Int = 0
+    @Volatile var lscGridRows: Int = 0
+    private var lscTexId = 0
+    private var lastGainMapRef: FloatArray? = null
 
     // ---- GL 初始化回调（GPU 多帧融合等需 context 就绪后初始化） ----
     var onGluReady: (() -> Unit)? = null
@@ -153,6 +167,18 @@ class RawPipeline : GLSurfaceView.Renderer {
             bitmap.recycle()
             lutEnabled = true
         }
+
+        // LSC gain map 纹理
+        val lscTexs = IntArray(1)
+        GLES30.glGenTextures(1, lscTexs, 0)
+        lscTexId = lscTexs[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lscTexId)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        lastGainMapRef = null
+
         // GPU 多帧管线初始化（context 已就绪）
         onGluReady?.invoke()
     }
@@ -287,11 +313,42 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1i(u.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
     }
 
+    /** 绑定 LSC gain map 纹理并设置 uniform。 */
+    private fun bindLsc(u: ProgUniforms) {
+        if (lscTexId == 0) return
+        val gains = lscGainMap
+        val cols = lscGridCols
+        val rows = lscGridRows
+        if (gains != null && cols > 0 && rows > 0) {
+            if (lastGainMapRef !== gains) {
+                val pixelCount = cols * rows * 4
+                val halfData = java.nio.ByteBuffer.allocateDirect(pixelCount * 2).order(java.nio.ByteOrder.nativeOrder())
+                val halfBuf = halfData.asShortBuffer()
+                for (i in 0 until pixelCount) {
+                    halfBuf.put(floatToHalf(gains[i]).toShort())
+                }
+                halfBuf.rewind()
+                halfData.rewind()
+                GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lscTexId)
+                GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GL_RGBA16F, cols, rows, 0, GLES30.GL_RGBA, GL_HALF_FLOAT, halfData)
+                lastGainMapRef = gains
+            }
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lscTexId)
+            GLES30.glUniform1i(u.uLscGainTex, 2)
+            GLES30.glUniform2f(u.uLscGridSize, cols.toFloat(), rows.toFloat())
+            GLES30.glUniform1i(u.uEnableLsc, 1)
+        } else {
+            GLES30.glUniform1i(u.uEnableLsc, 0)
+        }
+    }
+
     private fun drawBayer(prog: Int, u: ProgUniforms) {
         useProgram(prog)
         val (ax, ay) = aspectScale()
         setBayerUniforms(u, ax, ay)
         bindLut(u)
+        bindLsc(u)
         drawQuad(u)
     }
 
@@ -319,6 +376,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texId)
         GLES30.glUniform1i(uniBilinear.uRawTex, 0)
         if (uniBilinear.uRawSize >= 0) GLES30.glUniform2f(uniBilinear.uRawSize, 2f, 2f)
+        GLES30.glUniform1i(uniBilinear.uEnableLsc, 0)
         drawQuad(uniBilinear)
     }
 
@@ -361,6 +419,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         useProgram(progBilinear)
         setBayerUniforms(uniBilinear, 1f, 1f)
         bindLut(uniBilinear)
+        bindLsc(uniBilinear)
         drawQuad(uniBilinear)
 
         return readCaptureBitmap(outW, outH)
@@ -479,6 +538,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         if (captureFbo != 0) { GLES30.glDeleteFramebuffers(1, intArrayOf(captureFbo), 0); captureFbo = 0 }
         if (texId != 0) { GLES30.glDeleteTextures(1, intArrayOf(texId), 0); texId = 0 }
         if (lutTextureId != 0) { GLES30.glDeleteTextures(1, intArrayOf(lutTextureId), 0); lutTextureId = 0 }
+        if (lscTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(lscTexId), 0); lscTexId = 0 }
         if (progBilinear != 0) { GLES30.glDeleteProgram(progBilinear); progBilinear = 0 }
     }
 
@@ -556,6 +616,9 @@ uniform vec2 uCFAOffset;
 uniform sampler2D uLutTexture;
 uniform float uLutSize;
 uniform bool uEnableLut;
+uniform sampler2D uLscGainTex;
+uniform vec2 uLscGridSize;
+uniform bool uEnableLsc;
 in vec2 vUV;
 out vec4 frag;
 
@@ -563,10 +626,22 @@ int ch(int x, int y) {
     return ((y & 1) == 0) ? (((x & 1) == 0) ? 0 : 1) : (((x & 1) == 0) ? 1 : 2);
 }
 
-float fix(float raw, int ch) {
+float getLscGain(int channel, vec2 uv) {
+    if (!uEnableLsc) return 1.0;
+    vec2 texCoord = vec2(
+        (uv.x * (uLscGridSize.x - 1.0) + 0.5) / uLscGridSize.x,
+        (uv.y * (uLscGridSize.y - 1.0) + 0.5) / uLscGridSize.y
+    );
+    vec4 gain = texture(uLscGainTex, texCoord);
+    return (channel == 0) ? gain.r : ((channel == 1) ? gain.g : gain.b);
+}
+
+float fix(float raw, int ch, vec2 lscUV) {
     float bl = (ch == 0) ? uBlackLevel.r : ((ch == 1) ? uBlackLevel.g : uBlackLevel.b);
+    float val = max(raw - bl, 0.0);
+    val *= getLscGain(ch, lscUV);
     float wb = (ch == 0) ? uWBGain.r  : ((ch == 1) ? uWBGain.g  : uWBGain.b);
-    return max((raw - bl) / (uWhiteLevel - bl), 0.0) * wb;
+    return val / (uWhiteLevel - bl) * wb;
 }
 
 vec3 applyLUT(vec3 color) {
@@ -640,8 +715,9 @@ void main() {
     int idx = 0;
     for (int dy = -2; dy <= 2; dy++) {
         for (int dx = -2; dx <= 2; dx++) {
-            float raw = texture(uRawTex, vUV + vec2(float(dx)*grid.x, float(dy)*grid.y)).r;
-            s[idx] = fix(raw, ch(bx+dx, by+dy));
+            vec2 sampleUV = vUV + vec2(float(dx)*grid.x, float(dy)*grid.y);
+            float raw = texture(uRawTex, sampleUV).r;
+            s[idx] = fix(raw, ch(bx+dx, by+dy), sampleUV);
             idx++;
         }
     }

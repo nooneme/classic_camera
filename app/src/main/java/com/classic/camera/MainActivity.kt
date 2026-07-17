@@ -602,6 +602,10 @@ class MainActivity : AppCompatActivity() {
         // 传感器安装角度 + 自拍镜像
         p.orientation = lens.sensorOrientation
         p.mirror = (lens.lensFacing == CameraMetadata.LENS_FACING_FRONT)
+        // 切换镜头时清空旧的 LSC 数据，等待新帧的增益图
+        p.lscGainMap = null
+        p.lscGridCols = 0
+        p.lscGridRows = 0
         // 诊断
         val sb = StringBuilder("lensParams bl=[${bl[0]},${bl[1]},${bl[2]}] wl=${lens.whiteLevel} " +
             "cfa=${cfaName(lens.colorFilterArrangement)}(${lens.colorFilterArrangement}) " +
@@ -679,6 +683,12 @@ class MainActivity : AppCompatActivity() {
                     p.blackLevelR = blR; p.blackLevelG = blG; p.blackLevelB = blB
                 }
                 if (wl != null) p.whiteLevel = wl
+                // 桥接 LSC gain map 数据
+                controller.lscGainMap?.let { lsc ->
+                    p.lscGainMap = lsc
+                    p.lscGridCols = controller.lscGridCols
+                    p.lscGridRows = controller.lscGridRows
+                }
                 glSurfaceView.requestRender()
             }
         }
