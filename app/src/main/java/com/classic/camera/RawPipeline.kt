@@ -676,7 +676,9 @@ void main() {
     private val TONEMAP_OUTPUT = """
     vec3 rgb = vec3(R, G, B);
     rgb = uCCM * rgb;
-    rgb = clamp(rgb, 0.0, 1.0);
+    rgb = max(rgb, 0.0);
+    const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+    rgb = rgb * (a * rgb + b) / (rgb * (c * rgb + d) + e);
     rgb = mix(12.92 * rgb, 1.055 * pow(rgb, vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), rgb));
     if (uEnableLut) { rgb = applyLutWithProtection(rgb); }
     frag = vec4(rgb, 1.0);

@@ -585,16 +585,6 @@ class CameraController(
                                 }
                             }
                             lscGainMap = gains
-                            // 日志：打印完整增益矩阵
-                            val sb = StringBuilder("LSC gain map ${cols}x${rows}:\n")
-                            for (r in 0 until rows) {
-                                for (c in 0 until cols) {
-                                    val idx = (r * cols + c) * 4
-                                    sb.append("[%.4f,%.4f,%.4f] ".format(gains[idx], gains[idx+1], gains[idx+2]))
-                                }
-                                sb.append('\n')
-                            }
-                            Log.d(LOG_TAG, sb.toString())
                         }
                     }
                     lastRepeatingResult = result
