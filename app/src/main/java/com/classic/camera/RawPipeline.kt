@@ -90,8 +90,6 @@ class RawPipeline : GLSurfaceView.Renderer {
     private lateinit var uniBilinear: ProgUniforms
 
     private var texId = 0
-    private var drawCount = 0
-    private var lastDrawLog = 0L
 
     // ---- LUT 滤镜 ----
     @Volatile var lutFloatArray: FloatArray? = null
@@ -268,14 +266,6 @@ class RawPipeline : GLSurfaceView.Renderer {
     // ====================== 预览渲染 ======================
 
     override fun onDrawFrame(gl: GL10?) {
-        drawCount++
-        val now = System.nanoTime()
-        if (now - lastDrawLog > 1_000_000_000L) {
-            android.util.Log.d("ClassicCamera",
-                "GL draw rate=${drawCount}/s buf=${rawBuffer != null} shorts=${rawShorts != null} w=$rawW h=$rawH")
-            drawCount = 0; lastDrawLog = now
-        }
-
         // 无论上层谁修改了 Viewport，每帧渲染前强制恢复到屏幕尺寸
         if (lastViewportW > 0 && lastViewportH > 0) {
             GLES30.glViewport(0, 0, lastViewportW, lastViewportH)
@@ -452,19 +442,6 @@ class RawPipeline : GLSurfaceView.Renderer {
                         val destY = curH - 1 - sy
                         argbStrip[destY * outW + sx] = (a shl 24) or (r shl 16) or (g shl 8) or b
                     }
-                }
-                // 日志：当前 strip 包含图像中心行时，输出中间 10 像素 RGBA
-                if (y <= outH / 2 && y + curH > outH / 2) {
-                    val cyInStrip = outH / 2 - y
-                    val cx = outW / 2
-                    val baseIdx = cyInStrip * outW
-                    val startPx = (cx - 5).coerceAtLeast(0)
-                    val endPx = (cx + 5).coerceAtMost(outW)
-                    val rgba = (startPx until endPx).map { i ->
-                        val c = argbStrip[baseIdx + i]
-                        "(%d,%d,%d)".format(c and 0xFF, (c ushr 8) and 0xFF, (c ushr 16) and 0xFF)
-                    }
-                    android.util.Log.d("ClassicCamera", "capture_glReadPixels_middle10: ${rgba.joinToString(",")}")
                 }
                 totalConvertTime += System.nanoTime() - tConvert
                 bitmap.setPixels(argbStrip, 0, outW, 0, outH - y - curH, outW, curH)

@@ -196,7 +196,6 @@ class CameraController(
             if (multiFrameCapturing) {
                 val tFrameArrived = System.nanoTime()
                 val bayer = extractRawShorts(img)
-                logMiddleShorts(LOG_TAG, bayer, img.width, img.height)
                 val tExtracted = System.nanoTime()
                 // 第一帧保留 Image 用于 DNG
                 if (multiFrameBuffers.isEmpty()) {
@@ -335,31 +334,7 @@ class CameraController(
         // 白平衡 gain
         val wb = lastWBGain
 
-        // 诊断：每秒打印一次（通过 directBuf 读取像素）
         val shortView = directBuf.asShortBuffer()
-        previewFrameCount++
-        val nowNs = System.nanoTime()
-        if (nowNs - lastPreviewLog > 1_000_000_000L) {
-            val center = (h/2)*w + (w/2)
-            val minVals = IntArray(4) { Int.MAX_VALUE }; val maxVals = IntArray(4)
-            var step = 0
-            var i = 0
-            while (i < w * h && step < 20000) {
-                val v = shortView.get(i).toInt() and 0xFFFF
-                val ci = i % 4
-                if (v < minVals[ci]) minVals[ci] = v
-                if (v > maxVals[ci]) maxVals[ci] = v
-                i += 3; step++
-            }
-            Log.d(LOG_TAG, "previewFrame OK w=$w h=$h center=${shortView.get(center).toInt() and 0xFFFF} " +
-                "range0=[${minVals.minOrNull()}:${maxVals.maxOrNull()}] onRawFrameSet=${onRawFrame != null} " +
-                "rowStride=$rowStride pixelStride=$pixelStride buf.remaining=${buf.remaining()} " +
-                "directBuf.remaining=${directBuf.remaining()} " +
-                "dynBl=${lastDynamicBlackLevel?.let { "[%.0f,%.0f,%.0f]".format(it[0],it[1],it[2]) } ?: "null"} " +
-                "dynWl=${lastDynamicWhiteLevel ?: "null"}")
-            previewFrameCount = 0
-            lastPreviewLog = nowNs
-        }
 
         // 传递动态黑/白电平
         val bl = lastDynamicBlackLevel
@@ -376,9 +351,6 @@ class CameraController(
         shortView.rewind()
         updateSemiAutoExposure(shortView, w, h)
     }
-    private var previewFrameCount = 0
-    private var lastPreviewLog = 0L
-
     @Volatile private var lastWBGain = floatArrayOf(1f, 1f, 1f)
 
     // ---- LSC 镜头阴影校正增益图 ----
@@ -388,8 +360,6 @@ class CameraController(
 
     // ---- 半自动 AE 反馈环状态 ----
     private var autoAeFrameCount = 0
-    /** 诊断计数器，每 60 帧打一次日志。 */
-    private var diagFrameCount = 0
 
     /**
      * 半自动 AE 反馈环（快门优先 / ISO 优先）。
@@ -404,7 +374,6 @@ class CameraController(
     private fun updateSemiAutoExposure(bayerView: java.nio.ShortBuffer, w: Int, h: Int) {
         val mc = manualController ?: return
         if (!mc.isManualExposure) {
-            diagFrameCount = 0
             return
         }
         val adjustIso = !mc.isIsoManual
@@ -455,16 +424,6 @@ class CameraController(
         val target = 0.18f
         val ratio = target / normalizedMean
 
-        // 诊断：每 60 帧打一次当前 ISO/快门/亮度
-        diagFrameCount++
-        if (diagFrameCount >= 60 && mc.isManualExposure) {
-            diagFrameCount = 0
-            Log.d(LOG_TAG, "diag: iso=${mc.iso} exp=${mc.exposureTimeNs}ns " +
-                "mean=${"%.0f".format(mean)} normalizedMean=${"%.3f".format(normalizedMean)} " +
-                "target=${"%.3f".format(target)} ratio=${"%.2f".format(ratio)} " +
-                "shutterManual=${mc.isShutterManual} isoManual=${mc.isIsoManual}")
-        }
-
         // 4. 每 10 帧调一次（避免震荡）
         autoAeFrameCount++
         if (autoAeFrameCount < 10) return
@@ -478,14 +437,12 @@ class CameraController(
             val newIso = (mc.iso * ratio).toInt().coerceIn(mc.sensitivityMin, mc.sensitivityMax)
             if (newIso != mc.iso) {
                 mc.iso = newIso
-                Log.d(LOG_TAG, "semiAE: iso mean=${"%.0f".format(mean)} normalizedMean=${"%.3f".format(normalizedMean)} ratio=${"%.2f".format(ratio)} iso=%d".format(mc.iso))
                 bgHandler.post { updateCaptureParams() }
             }
         } else if (adjustShutter) {
             val newExp = (mc.exposureTimeNs * ratio).toLong().coerceIn(mc.exposureMinNs, mc.exposureMaxNs)
             if (newExp != mc.exposureTimeNs) {
                 mc.exposureTimeNs = newExp
-                Log.d(LOG_TAG, "semiAE: shutter mean=${"%.0f".format(mean)} normalizedMean=${"%.3f".format(normalizedMean)} ratio=${"%.2f".format(ratio)} exp=%d".format(newExp))
                 bgHandler.post { updateCaptureParams() }
             }
         }
@@ -593,16 +550,6 @@ class CameraController(
                         }
                     }
                     lastRepeatingResult = result
-                    rawFrameCount++
-                    val now = System.nanoTime()
-                    if (now - lastFpsTime > 1_000_000_000L) {
-                        val fps = rawFrameCount.toFloat() * 1_000_000_000f / (now - lastFpsTime)
-                        Log.d(LOG_TAG, "RAW repeating fps=%.1f wb=[${
-                            "%.2f,%.2f,%.2f".format(lastWBGain[0], lastWBGain[1], lastWBGain[2])
-                        }]".format(fps))
-                        rawFrameCount = 0
-                        lastFpsTime = now
-                    }
                 }
             }
             captureCb = cb
@@ -613,8 +560,6 @@ class CameraController(
             Log.e(LOG_TAG, "startRawRepeating err", e)
         }
     }
-    private var rawFrameCount = 0
-    private var lastFpsTime = System.nanoTime()
 
     /** 拍照：拦截下一帧预览 Image 做 DNG，用快照参数保证 JPEG 色彩与预览一致。 */
     fun capture(callback: (dngName: String, jpgName: String, dynamic: Map<String, String>) -> Unit) {
