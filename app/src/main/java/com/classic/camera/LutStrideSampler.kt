@@ -1,56 +1,49 @@
 package com.classic.camera
 
 import android.graphics.Bitmap
-import kotlin.math.sqrt
+import kotlin.random.Random
 
 object LutStrideSampler {
 
     fun sample(
         origBitmap: Bitmap,
         filtBitmap: Bitmap,
-        targetSamples: Int = 100000
+        targetSamples: Int = 3_000_000
     ): Triple<IntArray, IntArray, Int> {
         val width = origBitmap.width
         val height = origBitmap.height
         val totalPixels = width.toLong() * height.toLong()
+        val count = minOf(targetSamples, totalPixels.toInt())
 
-        val step = if (totalPixels <= targetSamples) {
-            1
-        } else {
-            sqrt((totalPixels / targetSamples).toDouble()).toInt().coerceAtLeast(1)
-        }
+        val origSamples = IntArray(count)
+        val filtSamples = IntArray(count)
 
-        val sampleW = (width + step - 1) / step
-        val sampleH = (height + step - 1) / step
-        val estimatedCount = sampleW * sampleH
+        val origRow = IntArray(width)
+        val filtRow = IntArray(width)
 
-        val origSamples = IntArray(estimatedCount)
-        val filtSamples = IntArray(estimatedCount)
+        val rng = Random(System.nanoTime())
+        var i = 0
 
-        val origRowBuffer = IntArray(width)
-        val filtRowBuffer = IntArray(width)
-
-        var sampleIndex = 0
-
-        var y = 0
-        while (y < height) {
-            origBitmap.getPixels(origRowBuffer, 0, width, 0, y, width, 1)
-            filtBitmap.getPixels(filtRowBuffer, 0, width, 0, y, width, 1)
-
-            var x = 0
-            while (x < width) {
-                origSamples[sampleIndex] = origRowBuffer[x]
-                filtSamples[sampleIndex] = filtRowBuffer[x]
-                sampleIndex++
-                x += step
+        if (count.toLong() == totalPixels) {
+            for (y in 0 until height) {
+                origBitmap.getPixels(origRow, 0, width, 0, y, width, 1)
+                filtBitmap.getPixels(filtRow, 0, width, 0, y, width, 1)
+                for (x in 0 until width) {
+                    origSamples[i] = origRow[x]; filtSamples[i] = filtRow[x]; i++
+                }
             }
-            y += step
+        } else {
+            while (i < count) {
+                val y = rng.nextInt(height)
+                origBitmap.getPixels(origRow, 0, width, 0, y, width, 1)
+                filtBitmap.getPixels(filtRow, 0, width, 0, y, width, 1)
+                repeat(count - i) {
+                    val x = rng.nextInt(width)
+                    origSamples[i] = origRow[x]; filtSamples[i] = filtRow[x]; i++
+                }
+            }
         }
 
-        return Triple(
-            origSamples.copyOf(sampleIndex),
-            filtSamples.copyOf(sampleIndex),
-            sampleIndex
-        )
+        return Triple(origSamples, filtSamples, count)
     }
 }

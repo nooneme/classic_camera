@@ -28,6 +28,7 @@ class LearnFilterActivity : AppCompatActivity() {
     private lateinit var filterPlaceholder: LinearLayout
     private lateinit var originalPreview: ImageView
     private lateinit var filterPreview: ImageView
+    private lateinit var btnAddImages: Button
     private lateinit var btnStartLearn: Button
     private lateinit var btnFinishLearn: Button
     private lateinit var tvCoverage: TextView
@@ -42,6 +43,10 @@ class LearnFilterActivity : AppCompatActivity() {
     private val allOrigPixels = mutableListOf<Int>()
     private val allFiltPixels = mutableListOf<Int>()
 
+    /** 是否正在学习中 */
+    private var isLearning = false
+    private var isAdding = false
+
     private val originalPicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         Log.d(TAG, "originalPicker result: $uri")
         if (uri != null) {
@@ -49,7 +54,7 @@ class LearnFilterActivity : AppCompatActivity() {
             originalPreview.setImageURI(uri)
             originalPreview.visibility = ImageView.VISIBLE
             originalPlaceholder.visibility = LinearLayout.GONE
-            updateStartButton()
+            updateButtons()
         }
     }
 
@@ -60,7 +65,7 @@ class LearnFilterActivity : AppCompatActivity() {
             filterPreview.setImageURI(uri)
             filterPreview.visibility = ImageView.VISIBLE
             filterPlaceholder.visibility = LinearLayout.GONE
-            updateStartButton()
+            updateButtons()
         }
     }
 
@@ -74,6 +79,7 @@ class LearnFilterActivity : AppCompatActivity() {
         filterPlaceholder = findViewById(R.id.filterPlaceholder)
         originalPreview = findViewById(R.id.originalPreview)
         filterPreview = findViewById(R.id.filterPreview)
+        btnAddImages = findViewById(R.id.btnAddImages)
         btnStartLearn = findViewById(R.id.btnStartLearn)
         btnFinishLearn = findViewById(R.id.btnFinishLearn)
         tvCoverage = findViewById(R.id.tvCoverage)
@@ -86,6 +92,10 @@ class LearnFilterActivity : AppCompatActivity() {
             filterPicker.launch("image/*")
         }
 
+        btnAddImages.setOnClickListener {
+            addImages()
+        }
+
         btnStartLearn.setOnClickListener {
             startLearning()
         }
@@ -95,53 +105,82 @@ class LearnFilterActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateStartButton() {
-        btnStartLearn.isEnabled = originalUri != null && filterUri != null
+    private fun updateButtons() {
+        val hasImages = originalUri != null && filterUri != null
+        btnAddImages.isEnabled = hasImages && !isAdding
+        btnStartLearn.isEnabled = allOrigPixels.isNotEmpty() && !isLearning
     }
 
-    private fun startLearning() {
+    private fun updatePixelCount() {
+        tvCoverage.text = "已累积 ${allOrigPixels.size} 像素"
+        tvCoverage.setTextColor(0xFF888888.toInt())
+    }
+
+    private fun addImages() {
         val origUri = originalUri ?: return
         val filtUri = filterUri ?: return
 
-        Log.d(TAG, "startLearning: orig=$origUri filt=$filtUri")
-
-        btnStartLearn.isEnabled = false
-        btnStartLearn.text = "学习中…"
+        isAdding = true
+        updateButtons()
+        btnAddImages.text = "添加中…"
 
         Thread {
             try {
                 val origBmp = loadBitmap(origUri)
                 val filtBmp = loadBitmap(filtUri)
-                Log.d(TAG, "bitmaps loaded: orig=${origBmp?.width}x${origBmp?.height} filt=${filtBmp?.width}x${filtBmp?.height}")
 
                 if (origBmp == null || filtBmp == null) {
-                    Log.e(TAG, "bitmap load returned null")
                     runOnUiThread {
                         Toast.makeText(this, "图片加载失败", Toast.LENGTH_SHORT).show()
-                        resetButton()
+                        isAdding = false
+                        btnAddImages.text = "添加图片"
+                        updateButtons()
                     }
                     return@Thread
                 }
 
-                val (origSamples, filtSamples, sampleCount) = LutStrideSampler.sample(origBmp, filtBmp, 1_000_000)
-                Log.d(TAG, "sampled $sampleCount pixel pairs")
-
+                val (origSamples, filtSamples, sampleCount) = LutStrideSampler.sample(origBmp, filtBmp)
                 origBmp.recycle()
                 filtBmp.recycle()
 
                 allOrigPixels.addAll(origSamples.toList())
                 allFiltPixels.addAll(filtSamples.toList())
-                Log.d(TAG, "accumulated: ${allOrigPixels.size} pixel pairs total")
 
+                runOnUiThread {
+                    updatePixelCount()
+                    Toast.makeText(this, "已添加 $sampleCount 像素", Toast.LENGTH_SHORT).show()
+                    isAdding = false
+                    btnAddImages.text = "添加图片"
+                    updateButtons()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "add images failed", e)
+                runOnUiThread {
+                    Toast.makeText(this, "添加失败: ${e.message}", Toast.LENGTH_LONG).show()
+                    isAdding = false
+                    btnAddImages.text = "添加图片"
+                    updateButtons()
+                }
+            }
+        }.start()
+    }
+
+    private fun startLearning() {
+        if (allOrigPixels.isEmpty()) return
+
+        isLearning = true
+        updateButtons()
+        btnStartLearn.text = "学习中…"
+
+        Thread {
+            try {
                 val totalNodes = LutEngine.LUT_SIZE * LutEngine.LUT_SIZE * LutEngine.LUT_SIZE
                 val outLut = FloatArray(totalNodes * 3)
 
-                Log.d(TAG, "calling JNI...")
                 val coverage = LutEngine.generateLutAndCheckCoverage(
                     allOrigPixels.toIntArray(), allFiltPixels.toIntArray(),
                     allOrigPixels.size, outLut
                 )
-                Log.d(TAG, "JNI returned coverage=$coverage")
 
                 runOnUiThread {
                     lastLut = outLut
@@ -150,21 +189,20 @@ class LearnFilterActivity : AppCompatActivity() {
                     tvCoverage.setTextColor(if (coverage >= 0.3f) 0xFF4CAF50.toInt() else 0xFFFFA726.toInt())
                     btnFinishLearn.isEnabled = true
                     Toast.makeText(this, "学习完成！色彩覆盖率 $pct%", Toast.LENGTH_LONG).show()
-                    resetButton()
+                    isLearning = false
+                    btnStartLearn.text = "开始学习"
+                    updateButtons()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "learning failed", e)
                 runOnUiThread {
                     Toast.makeText(this, "学习失败: ${e.message}", Toast.LENGTH_LONG).show()
-                    resetButton()
+                    isLearning = false
+                    btnStartLearn.text = "开始学习"
+                    updateButtons()
                 }
             }
         }.start()
-    }
-
-    private fun resetButton() {
-        btnStartLearn.isEnabled = true
-        btnStartLearn.text = "开始学习"
     }
 
     private fun showSaveDialog() {
@@ -189,7 +227,7 @@ class LearnFilterActivity : AppCompatActivity() {
 
     private fun saveCubeFile(name: String) {
         val lut = lastLut ?: return
-        val dir = File(filesDir, "filters")
+        val dir = getExternalFilesDir("filters") ?: filesDir
         dir.mkdirs()
         val file = File(dir, "${name}.cube")
 

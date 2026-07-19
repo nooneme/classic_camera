@@ -160,28 +160,45 @@
         android:paddingVertical="8dp">
 
         <Button
-            android:id="@+id/btnStartLearn"
-            android:layout_width="wrap_content"
+            android:id="@+id/btnAddImages"
+            android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:text="开始学习"
+            android:layout_weight="1"
+            android:text="添加图片"
             android:textColor="#FFFFFF"
             android:backgroundTint="#4A90D9"
             android:enabled="false"
-            android:paddingHorizontal="32dp" />
+            android:paddingHorizontal="8dp" />
 
         <Space
-            android:layout_width="12dp"
+            android:layout_width="8dp"
+            android:layout_height="0dp" />
+
+        <Button
+            android:id="@+id/btnStartLearn"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="开始学习"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#555555"
+            android:enabled="false"
+            android:paddingHorizontal="8dp" />
+
+        <Space
+            android:layout_width="8dp"
             android:layout_height="0dp" />
 
         <Button
             android:id="@+id/btnFinishLearn"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="match_parent"
+            android:layout_weight="1"
             android:text="完成"
             android:textColor="#FFFFFF"
             android:backgroundTint="#555555"
             android:enabled="false"
-            android:paddingHorizontal="32dp" />
+            android:paddingHorizontal="8dp" />
     </LinearLayout>
 
 </LinearLayout>

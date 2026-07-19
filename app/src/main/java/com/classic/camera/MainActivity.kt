@@ -78,6 +78,11 @@ class MainActivity : AppCompatActivity() {
     private val captureVibHandler = Handler(Looper.getMainLooper())
 
     /** 当前滤镜路径（空串=无滤镜） */
+    /** 设置弹窗引用（拖拽滑块时透明化用） */
+    private var settingsDialog: AlertDialog? = null
+    private var settingsDialogOriginalBg: android.graphics.drawable.Drawable? = null
+    private val settingsLayoutChildren = mutableListOf<android.view.View>()
+
     private var currentFilterPath: String = ""
 
     /** 滤镜选择结果接收器 */
@@ -141,6 +146,8 @@ class MainActivity : AppCompatActivity() {
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).also {
             pipeline?.blackLevelOffset = it.getInt("black_level_offset", 0).toFloat()
             pipeline?.whiteLevelOffset = it.getInt("white_level_offset", 0).toFloat()
+            pipeline?.toneMapD = it.getFloat("tone_map_d", 0.59f)
+            pipeline?.toneMapE = it.getFloat("tone_map_e", 0.14f)
         }
         glSurfaceView.setRenderer(pipeline)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
@@ -431,12 +438,17 @@ class MainActivity : AppCompatActivity() {
                 override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
                     val offset = progress - 32
                     tvBlOffset.text = "黑电平补偿: ${if (offset >= 0) "+$offset" else "$offset"}"
+                    glSurfaceView.queueEvent { pipeline?.blackLevelOffset = offset.toFloat() }
                 }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {}
+                override fun onStartTrackingTouch(seekBar: SeekBar) {
+                    val offset = seekBar.progress - 32
+                    glSurfaceView.queueEvent { pipeline?.blackLevelOffset = offset.toFloat() }
+                    showToneMapPreview(tvBlOffset, seekBar)
+                }
                 override fun onStopTrackingTouch(seekBar: SeekBar) {
                     val offset = seekBar.progress - 32
                     prefs.edit().putInt("black_level_offset", offset).apply()
-                    glSurfaceView.queueEvent { pipeline?.blackLevelOffset = offset.toFloat() }
+                    hideToneMapPreview()
                 }
             })
         }
@@ -455,12 +467,17 @@ class MainActivity : AppCompatActivity() {
                 override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
                     val offset = progress - 256
                     tvWlOffset.text = "白电平补偿: ${if (offset >= 0) "+$offset" else "$offset"}"
+                    glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = offset.toFloat() }
                 }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {}
+                override fun onStartTrackingTouch(seekBar: SeekBar) {
+                    val offset = seekBar.progress - 256
+                    glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = offset.toFloat() }
+                    showToneMapPreview(tvWlOffset, seekBar)
+                }
                 override fun onStopTrackingTouch(seekBar: SeekBar) {
                     val offset = seekBar.progress - 256
                     prefs.edit().putInt("white_level_offset", offset).apply()
-                    glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = offset.toFloat() }
+                    hideToneMapPreview()
                 }
             })
         }
@@ -470,10 +487,108 @@ class MainActivity : AppCompatActivity() {
         layout.addView(tvWlOffset)
         layout.addView(sbWlOffset)
 
-        AlertDialog.Builder(this)
+        // ---- 色调映射 D（分母一次项系数） ----
+        val toneMapD = prefs.getFloat("tone_map_d", 0.59f)
+        val toneMapE = prefs.getFloat("tone_map_e", 0.14f)
+        val tvToneMapD = TextView(this).apply {
+            text = "色调 D（默认0.59）: ${"%.2f".format(toneMapD)}"
+            textSize = 15f
+            setPadding(48, 16, 48, 4)
+        }
+        val sbToneMapD = SeekBar(this).apply {
+            max = 300
+            progress = ((toneMapD + 1f) * 100).roundToInt().coerceIn(0, 300)
+            setPadding(48, 0, 48, 16)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    val v = (progress / 100f) - 1f
+                    tvToneMapD.text = "色调 D（默认0.59）: ${"%.2f".format(v)}"
+                    glSurfaceView.queueEvent { pipeline?.toneMapD = v }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {
+                    val v = (seekBar.progress / 100f) - 1f
+                    glSurfaceView.queueEvent { pipeline?.toneMapD = v }
+                    showToneMapPreview(tvToneMapD, seekBar)
+                }
+                override fun onStopTrackingTouch(seekBar: SeekBar) {
+                    val v = (seekBar.progress / 100f) - 1f
+                    prefs.edit().putFloat("tone_map_d", v).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+
+        // ---- 色调映射 E（分母常数项系数） ----
+        val tvToneMapE = TextView(this).apply {
+            text = "色调 E（默认0.14）: ${"%.2f".format(toneMapE)}"
+            textSize = 15f
+            setPadding(48, 8, 48, 4)
+        }
+        val sbToneMapE = SeekBar(this).apply {
+            max = 40
+            progress = ((toneMapE - 0.1f) * 100).roundToInt().coerceIn(0, 40)
+            setPadding(48, 0, 48, 16)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    val v = 0.1f + progress / 100f
+                    tvToneMapE.text = "色调 E（默认0.14）: ${"%.2f".format(v)}"
+                    glSurfaceView.queueEvent { pipeline?.toneMapE = v }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {
+                    val v = 0.1f + seekBar.progress / 100f
+                    glSurfaceView.queueEvent { pipeline?.toneMapE = v }
+                    showToneMapPreview(tvToneMapE, seekBar)
+                }
+                override fun onStopTrackingTouch(seekBar: SeekBar) {
+                    val v = 0.1f + seekBar.progress / 100f
+                    prefs.edit().putFloat("tone_map_e", v).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+
+        layout.addView(tvToneMapD)
+        layout.addView(sbToneMapD)
+        layout.addView(tvToneMapE)
+        layout.addView(sbToneMapE)
+
+        settingsDialog = AlertDialog.Builder(this)
             .setView(layout)
             .setPositiveButton("完成", null)
             .show()
+        settingsDialogOriginalBg = settingsDialog?.window?.decorView?.background
+        settingsLayoutChildren.clear()
+        for (i in 0 until layout.childCount) settingsLayoutChildren.add(layout.getChildAt(i))
+    }
+
+    /** 色调映射滑块拖拽时：弹窗全透明，只保留当前文字。 */
+    private var toneMapKeepLabel: android.widget.TextView? = null
+    private var toneMapLabelOriginalColor: Int = 0
+
+    private fun showToneMapPreview(keepLabel: android.widget.TextView, keepSlider: android.widget.SeekBar) {
+        settingsDialog?.window?.let { w ->
+            w.setDimAmount(0f)
+            w.decorView.background = null
+        }
+        toneMapKeepLabel = keepLabel
+        toneMapLabelOriginalColor = keepLabel.currentTextColor
+        keepLabel.setTextColor(0xFFFFFFFF.toInt())
+        for (child in settingsLayoutChildren) {
+            child.alpha = if (child === keepLabel || child === keepSlider) 1f else 0f
+        }
+        settingsDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.alpha = 0f
+    }
+
+    /** 松手后恢复弹窗显示。 */
+    private fun hideToneMapPreview() {
+        settingsDialog?.window?.let { w ->
+            w.setDimAmount(0.6f)
+            w.decorView.background = settingsDialogOriginalBg
+        }
+        for (child in settingsLayoutChildren) child.alpha = 1f
+        settingsDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.alpha = 1f
+        toneMapKeepLabel?.setTextColor(toneMapLabelOriginalColor)
+        toneMapKeepLabel = null
     }
 
     companion object {

@@ -62,7 +62,7 @@ class FilterActivity : AppCompatActivity() {
     }
 
     private fun setupFileObserver() {
-        val dir = File(filesDir, "filters")
+        val dir = getExternalFilesDir("filters") ?: filesDir
         dir.mkdirs()
 
         fileObserver = object : FileObserver(dir.absolutePath, CREATE or DELETE or MOVED_FROM or MOVED_TO) {
@@ -94,7 +94,7 @@ class FilterActivity : AppCompatActivity() {
     private fun loadFilters() {
         filterList.clear()
         filterList.add(noneItem)
-        val dir = File(filesDir, "filters")
+        val dir = getExternalFilesDir("filters") ?: filesDir
         if (dir.isDirectory) {
             dir.listFiles()
                 ?.filter { it.isFile && it.name.endsWith(".cube") }

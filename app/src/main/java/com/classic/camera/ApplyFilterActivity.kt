@@ -95,7 +95,7 @@ class ApplyFilterActivity : AppCompatActivity() {
     }
 
     private fun loadFilters() {
-        val dir = File(filesDir, "filters")
+        val dir = getExternalFilesDir("filters") ?: filesDir
         filterFiles = if (dir.isDirectory) {
             dir.listFiles()
                 ?.filter { it.isFile && it.name.endsWith(".cube") }

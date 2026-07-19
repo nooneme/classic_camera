@@ -40,6 +40,8 @@ class RawPipeline : GLSurfaceView.Renderer {
     var orientation: Int = 90
     var mirror: Boolean = false
     var cfaType = 2
+    @Volatile var toneMapD = 0.59f
+    @Volatile var toneMapE = 0.14f
 
     private var rawDirectBuf: java.nio.ByteBuffer? = null
     private var texAllocated = false
@@ -56,6 +58,8 @@ class RawPipeline : GLSurfaceView.Renderer {
         var uWBGain = 0; var uCCM = 0
         var uAspectScale = 0; var uCFAOffset = 0
         var uOrientation = 0; var uMirror = 0
+        // tone mapping
+        var uToneMapD = 0; var uToneMapE = 0
         // LUT
         var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0
         // LSC
@@ -77,6 +81,8 @@ class RawPipeline : GLSurfaceView.Renderer {
             uLscGainTex = GLES30.glGetUniformLocation(id, "uLscGainTex")
             uLscGridSize = GLES30.glGetUniformLocation(id, "uLscGridSize")
             uEnableLsc = GLES30.glGetUniformLocation(id, "uEnableLsc")
+            uToneMapD = GLES30.glGetUniformLocation(id, "uToneMapD")
+            uToneMapE = GLES30.glGetUniformLocation(id, "uToneMapE")
             lookupLut()
         }
 
@@ -160,9 +166,10 @@ class RawPipeline : GLSurfaceView.Renderer {
         // 表面重建后恢复 LUT 数据
         val existingLut = lutFloatArray
         if (existingLut != null) {
-            val bitmap = LutUtils.createLutBitmap(existingLut)
-            GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, bitmap, 0)
-            bitmap.recycle()
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lutTextureId)
+            val buf = lutToBuffer(existingLut)
+            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, 1089, 33, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buf)
             lutEnabled = true
         }
 
@@ -234,6 +241,8 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform2f(u.uCFAOffset, cfaoX, cfaoY)
         GLES30.glUniform1i(u.uOrientation, orientation)
         GLES30.glUniform1i(u.uMirror, if (mirror) 1 else 0)
+        GLES30.glUniform1f(u.uToneMapD, toneMapD)
+        GLES30.glUniform1f(u.uToneMapE, toneMapE)
         GLES30.glUniform2f(u.uAspectScale, aspectX, aspectY)
     }
 
@@ -367,6 +376,8 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1i(uniBilinear.uRawTex, 0)
         if (uniBilinear.uRawSize >= 0) GLES30.glUniform2f(uniBilinear.uRawSize, 2f, 2f)
         GLES30.glUniform1i(uniBilinear.uEnableLsc, 0)
+        GLES30.glUniform1f(uniBilinear.uToneMapD, 0.59f)
+        GLES30.glUniform1f(uniBilinear.uToneMapE, 0.14f)
         drawQuad(uniBilinear)
     }
 
@@ -469,11 +480,28 @@ class RawPipeline : GLSurfaceView.Renderer {
         lutFloatArray = data
         lutEnabled = data != null
         if (data != null && lutTextureId != 0) {
-            val bitmap = LutUtils.createLutBitmap(data)
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lutTextureId)
-            GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, bitmap, 0)
-            bitmap.recycle()
+            val buf = lutToBuffer(data)
+            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, 1089, 33, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buf)
         }
+    }
+
+    private fun lutToBuffer(lut: FloatArray): java.nio.ByteBuffer {
+        val w = 1089; val h = 33
+        val buf = java.nio.ByteBuffer.allocateDirect(w * h * 4).order(java.nio.ByteOrder.nativeOrder())
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val bSlice = x / 33; val rIndex = x % 33; val gIndex = y
+                val idx = (bSlice * 1089 + gIndex * 33 + rIndex) * 3
+                buf.put((lut[idx] * 255f).toInt().coerceIn(0, 255).toByte())
+                buf.put((lut[idx + 1] * 255f).toInt().coerceIn(0, 255).toByte())
+                buf.put((lut[idx + 2] * 255f).toInt().coerceIn(0, 255).toByte())
+                buf.put(255.toByte())
+            }
+        }
+        buf.rewind()
+        return buf
     }
 
     // ====================== 资源管理 ======================
@@ -596,6 +624,8 @@ uniform bool uEnableLut;
 uniform sampler2D uLscGainTex;
 uniform vec2 uLscGridSize;
 uniform bool uEnableLsc;
+uniform float uToneMapD;
+uniform float uToneMapE;
 in vec2 vUV;
 out vec4 frag;
 
@@ -654,8 +684,8 @@ void main() {
     vec3 rgb = vec3(R, G, B);
     rgb = uCCM * rgb;
     rgb = max(rgb, 0.0);
-    const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
-    rgb = rgb * (a * rgb + b) / (rgb * (c * rgb + d) + e);
+    const float a = 2.51, b = 0.03, c = 2.43;
+    rgb = rgb * (a * rgb + b) / (rgb * (c * rgb + uToneMapD) + uToneMapE);
     rgb = mix(12.92 * rgb, 1.055 * pow(rgb, vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), rgb));
     if (uEnableLut) { rgb = applyLutWithProtection(rgb); }
     frag = vec4(rgb, 1.0);
