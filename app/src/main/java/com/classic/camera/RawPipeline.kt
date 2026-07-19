@@ -13,10 +13,12 @@ import javax.microedition.khronos.opengles.GL10
 class RawPipeline : GLSurfaceView.Renderer {
 
     companion object {
-        private const val GL_R16 = 0x822A  // R16F, used with GL_FLOAT
+        private const val GL_R16 = 0x822A
         private const val GL_RGBA16F = 0x881A
         private const val GL_HALF_FLOAT = 0x140B
     }
+
+
 
     // ---- 供外部更新参数 ----
     var rawWidth: Int = 0
@@ -135,14 +137,11 @@ class RawPipeline : GLSurfaceView.Renderer {
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-        android.util.Log.d("ClassicCamera", "GL onSurfaceCreated")
         captureFbo = 0; captureTex = 0; captureTexW = 0; captureTexH = 0
         texAllocated = false; texW = 0; texH = 0
 
         progBilinear = createProgram(VS, buildBayerShader(BILINEAR_BODY))
         uniBilinear = ProgUniforms(progBilinear).also { it.lookupBayer() }
-
-        android.util.Log.d("ClassicCamera", "GL programs: bilinear=$progBilinear")
 
         val texs = IntArray(1)
         GLES30.glGenTextures(1, texs, 0)
@@ -153,23 +152,22 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
 
-        // LUT 纹理
+        // LUT 3D 纹理
         val lutTexs = IntArray(1)
         GLES30.glGenTextures(1, lutTexs, 0)
         lutTextureId = lutTexs[0]
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lutTextureId)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D, GLES30.GL_TEXTURE_WRAP_R, GLES30.GL_CLAMP_TO_EDGE)
         lutEnabled = false
-        // 表面重建后恢复 LUT 数据
-        val existingLut = lutFloatArray
-        if (existingLut != null) {
+        if (lutFloatArray != null) {
             GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lutTextureId)
-            val buf = lutToBuffer(existingLut)
-            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, 1089, 33, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buf)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
+            GLES30.glTexImage3D(GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGBA8, 33, 33, 33, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, lutToBuffer3D(lutFloatArray!!))
+            while (GLES30.glGetError() != GLES30.GL_NO_ERROR) {}
             lutEnabled = true
         }
 
@@ -275,12 +273,10 @@ class RawPipeline : GLSurfaceView.Renderer {
     // ====================== 预览渲染 ======================
 
     override fun onDrawFrame(gl: GL10?) {
-        // 无论上层谁修改了 Viewport，每帧渲染前强制恢复到屏幕尺寸
         if (lastViewportW > 0 && lastViewportH > 0) {
             GLES30.glViewport(0, 0, lastViewportW, lastViewportH)
         }
 
-        // 清除可能被上层残留的 GL 错误
         while (GLES30.glGetError() != GLES30.GL_NO_ERROR) {}
 
         GLES30.glClearColor(0f, 0f, 0f, 1f)
@@ -288,7 +284,6 @@ class RawPipeline : GLSurfaceView.Renderer {
 
         if (rawW <= 0 || rawH <= 0) { drawTestPattern(); return }
 
-        // 优先 ByteBuffer 路径（跳过 ShortArray 中间分配）
         val buf = rawBuffer
         if (buf != null) {
             buf.position(0)
@@ -298,7 +293,6 @@ class RawPipeline : GLSurfaceView.Renderer {
             if (!uploadRaw(data)) { drawTestPattern(); return }
         }
 
-        // 预览固定双线性（快速），设置中选择的算法只影响拍照 JPG
         drawBayer(progBilinear, uniBilinear)
     }
 
@@ -306,7 +300,7 @@ class RawPipeline : GLSurfaceView.Renderer {
     private fun bindLut(u: ProgUniforms) {
         if (lutTextureId == 0) return
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lutTextureId)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
         GLES30.glUniform1i(u.uLutTex, 1)
         GLES30.glUniform1f(u.uLutSizeLoc, 33.0f)
         GLES30.glUniform1i(u.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
@@ -480,10 +474,11 @@ class RawPipeline : GLSurfaceView.Renderer {
         lutFloatArray = data
         lutEnabled = data != null
         if (data != null && lutTextureId != 0) {
+            while (GLES30.glGetError() != GLES30.GL_NO_ERROR) {}
             GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, lutTextureId)
-            val buf = lutToBuffer(data)
-            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, 1089, 33, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buf)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
+            GLES30.glTexImage3D(GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGBA8, 33, 33, 33, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, lutToBuffer3D(data))
+            while (GLES30.glGetError() != GLES30.GL_NO_ERROR) {}
         }
     }
 
@@ -498,6 +493,24 @@ class RawPipeline : GLSurfaceView.Renderer {
                 buf.put((lut[idx + 1] * 255f).toInt().coerceIn(0, 255).toByte())
                 buf.put((lut[idx + 2] * 255f).toInt().coerceIn(0, 255).toByte())
                 buf.put(255.toByte())
+            }
+        }
+        buf.rewind()
+        return buf
+    }
+
+    private fun lutToBuffer3D(lut: FloatArray): java.nio.ByteBuffer {
+        val size = 33
+        val buf = java.nio.ByteBuffer.allocateDirect(size * size * size * 4).order(java.nio.ByteOrder.nativeOrder())
+        for (b in 0 until size) {
+            for (g in 0 until size) {
+                for (r in 0 until size) {
+                    val idx = (b * size * size + g * size + r) * 3
+                    buf.put((lut[idx] * 255f).toInt().coerceIn(0, 255).toByte())
+                    buf.put((lut[idx + 1] * 255f).toInt().coerceIn(0, 255).toByte())
+                    buf.put((lut[idx + 2] * 255f).toInt().coerceIn(0, 255).toByte())
+                    buf.put(255.toByte())
+                }
             }
         }
         buf.rewind()
@@ -618,7 +631,7 @@ uniform float uWhiteLevel;
 uniform vec3 uWBGain;
 uniform mat3 uCCM;
 uniform vec2 uCFAOffset;
-uniform sampler2D uLutTexture;
+uniform highp sampler3D uLutTexture;
 uniform float uLutSize;
 uniform bool uEnableLut;
 uniform sampler2D uLscGainTex;
@@ -652,24 +665,11 @@ float fix(float raw, int ch, vec2 lscUV) {
 }
 
 vec3 applyLUT(vec3 color) {
-    vec3 lutCoord = color * (uLutSize - 1.0);
-    float blueSlice = floor(lutCoord.b);
-    float blueOffset = lutCoord.b - blueSlice;
-    float rCoord1 = (lutCoord.r + blueSlice * uLutSize + 0.5) / (uLutSize * uLutSize);
-    float rCoord2 = (lutCoord.r + min(blueSlice + 1.0, uLutSize - 1.0) * uLutSize + 0.5) / (uLutSize * uLutSize);
-    float gCoord = (lutCoord.g + 0.5) / uLutSize;
-    vec3 lutColor1 = texture(uLutTexture, vec2(rCoord1, gCoord)).rgb;
-    vec3 lutColor2 = texture(uLutTexture, vec2(rCoord2, gCoord)).rgb;
-    return mix(lutColor1, lutColor2, blueOffset);
+    vec3 coord = (color * (uLutSize - 1.0) + 0.5) / uLutSize;
+    return texture(uLutTexture, coord).rgb;
 }
 
-vec3 applyLutWithProtection(vec3 originalRgb) {
-    vec3 filteredRgb = applyLUT(originalRgb);
-    float luminance = dot(originalRgb, vec3(0.299, 0.587, 0.114));
-    float shadowStrength = mix(0.3, 1.0, smoothstep(0.0, 0.15, luminance));
-    float highlightStrength = mix(1.0, 0.4, smoothstep(0.85, 1.0, luminance));
-    return mix(originalRgb, filteredRgb, shadowStrength * highlightStrength);
-}
+
 
 void main() {
     vec2 sz = vec2(textureSize(uRawTex, 0));
@@ -687,7 +687,7 @@ void main() {
     const float a = 2.51, b = 0.03, c = 2.43;
     rgb = rgb * (a * rgb + b) / (rgb * (c * rgb + uToneMapD) + uToneMapE);
     rgb = mix(12.92 * rgb, 1.055 * pow(rgb, vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), rgb));
-    if (uEnableLut) { rgb = applyLutWithProtection(rgb); }
+    if (uEnableLut) { rgb = applyLUT(rgb); }
     frag = vec4(rgb, 1.0);
 }
 """.trimIndent()
