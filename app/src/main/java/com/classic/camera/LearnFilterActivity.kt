@@ -42,6 +42,8 @@ class LearnFilterActivity : AppCompatActivity() {
     /** 累积的多组像素数据 */
     private val allOrigPixels = mutableListOf<Int>()
     private val allFiltPixels = mutableListOf<Int>()
+    /** 已见过的原图颜色，用于去重 */
+    private val seenOrigColors = mutableSetOf<Int>()
 
     /** 是否正在学习中 */
     private var isLearning = false
@@ -108,7 +110,11 @@ class LearnFilterActivity : AppCompatActivity() {
     private fun updateButtons() {
         val hasImages = originalUri != null && filterUri != null
         btnAddImages.isEnabled = hasImages && !isAdding
+        btnAddImages.backgroundTintList = android.content.res.ColorStateList.valueOf(
+            if (btnAddImages.isEnabled) 0xFF4A90D9.toInt() else 0xFF555555.toInt())
         btnStartLearn.isEnabled = allOrigPixels.isNotEmpty() && !isLearning
+        btnStartLearn.backgroundTintList = android.content.res.ColorStateList.valueOf(
+            if (btnStartLearn.isEnabled) 0xFF4A90D9.toInt() else 0xFF555555.toInt())
     }
 
     private fun updatePixelCount() {
@@ -139,7 +145,7 @@ class LearnFilterActivity : AppCompatActivity() {
                     return@Thread
                 }
 
-                val (origSamples, filtSamples, sampleCount) = LutStrideSampler.sample(origBmp, filtBmp)
+                val (origSamples, filtSamples, sampleCount) = LutStrideSampler.sample(origBmp, filtBmp, seenOrigColors)
                 origBmp.recycle()
                 filtBmp.recycle()
 
