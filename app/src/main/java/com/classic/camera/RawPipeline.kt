@@ -44,6 +44,8 @@ class RawPipeline : GLSurfaceView.Renderer {
     var cfaType = 2
     @Volatile var toneMapD = 0.59f
     @Volatile var toneMapE = 0.14f
+    @Volatile var shadowAmt = 0f
+    @Volatile var highlightAmt = 0f
 
     private var rawDirectBuf: java.nio.ByteBuffer? = null
     private var texAllocated = false
@@ -62,6 +64,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         var uOrientation = 0; var uMirror = 0
         // tone mapping
         var uToneMapD = 0; var uToneMapE = 0
+        var uShadowAmt = 0; var uHighlightAmt = 0
         // LUT
         var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0
         // LSC
@@ -85,6 +88,8 @@ class RawPipeline : GLSurfaceView.Renderer {
             uEnableLsc = GLES30.glGetUniformLocation(id, "uEnableLsc")
             uToneMapD = GLES30.glGetUniformLocation(id, "uToneMapD")
             uToneMapE = GLES30.glGetUniformLocation(id, "uToneMapE")
+            uShadowAmt = GLES30.glGetUniformLocation(id, "uShadowAmt")
+            uHighlightAmt = GLES30.glGetUniformLocation(id, "uHighlightAmt")
             lookupLut()
         }
 
@@ -241,6 +246,8 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1i(u.uMirror, if (mirror) 1 else 0)
         GLES30.glUniform1f(u.uToneMapD, toneMapD)
         GLES30.glUniform1f(u.uToneMapE, toneMapE)
+        GLES30.glUniform1f(u.uShadowAmt, shadowAmt)
+        GLES30.glUniform1f(u.uHighlightAmt, highlightAmt)
         GLES30.glUniform2f(u.uAspectScale, aspectX, aspectY)
     }
 
@@ -372,6 +379,8 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1i(uniBilinear.uEnableLsc, 0)
         GLES30.glUniform1f(uniBilinear.uToneMapD, 0.59f)
         GLES30.glUniform1f(uniBilinear.uToneMapE, 0.14f)
+        GLES30.glUniform1f(uniBilinear.uShadowAmt, 0f)
+        GLES30.glUniform1f(uniBilinear.uHighlightAmt, 0f)
         drawQuad(uniBilinear)
     }
 
@@ -639,6 +648,8 @@ uniform vec2 uLscGridSize;
 uniform bool uEnableLsc;
 uniform float uToneMapD;
 uniform float uToneMapE;
+uniform float uShadowAmt;
+uniform float uHighlightAmt;
 in vec2 vUV;
 out vec4 frag;
 
@@ -669,7 +680,14 @@ vec3 applyLUT(vec3 color) {
     return texture(uLutTexture, coord).rgb;
 }
 
-
+vec3 applyShadowHighlight(vec3 color) {
+    float pLow = max(1.0 - uShadowAmt, 0.001);
+    float pHigh = max(1.0 - uHighlightAmt, 0.001);
+    vec3 resultLow = pow(max(color / 0.5, 0.0), vec3(pLow)) * 0.5;
+    vec3 resultHigh = pow(max((color - 0.5) / 0.5, 0.0), vec3(pHigh)) * 0.5 + 0.5;
+    vec3 mask = step(vec3(0.5), color);
+    return mix(resultLow, resultHigh, mask);
+}
 
 void main() {
     vec2 sz = vec2(textureSize(uRawTex, 0));
@@ -686,6 +704,7 @@ void main() {
     rgb = max(rgb, 0.0);
     const float a = 2.51, b = 0.03, c = 2.43;
     rgb = rgb * (a * rgb + b) / (rgb * (c * rgb + uToneMapD) + uToneMapE);
+    rgb = applyShadowHighlight(rgb);
     rgb = mix(12.92 * rgb, 1.055 * pow(rgb, vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), rgb));
     if (uEnableLut) { rgb = applyLUT(rgb); }
     frag = vec4(rgb, 1.0);

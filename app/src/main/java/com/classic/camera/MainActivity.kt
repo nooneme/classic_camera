@@ -148,6 +148,8 @@ class MainActivity : AppCompatActivity() {
             pipeline?.whiteLevelOffset = it.getInt("white_level_offset", 0).toFloat()
             pipeline?.toneMapD = it.getFloat("tone_map_d", 0.59f)
             pipeline?.toneMapE = it.getFloat("tone_map_e", 0.14f)
+            pipeline?.shadowAmt = it.getFloat("shadow_amt", 0f)
+            pipeline?.highlightAmt = it.getFloat("highlight_amt", 0f)
         }
         glSurfaceView.setRenderer(pipeline)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
@@ -551,6 +553,111 @@ class MainActivity : AppCompatActivity() {
         layout.addView(sbToneMapD)
         layout.addView(tvToneMapE)
         layout.addView(sbToneMapE)
+
+        // ---- 阴影/高光 S 曲线 ----
+        val shadowAmt = prefs.getFloat("shadow_amt", 0f)
+        val highlightAmt = prefs.getFloat("highlight_amt", 0f)
+        val tvShadow = TextView(this).apply {
+            text = "阴影: ${"%.0f".format(shadowAmt * 100)}"
+            textSize = 15f
+            setPadding(48, 16, 48, 4)
+        }
+        val sbShadow = SeekBar(this).apply {
+            max = 200
+            progress = ((shadowAmt + 1f) * 100).roundToInt().coerceIn(0, 200)
+            setPadding(48, 0, 48, 16)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    val v = (progress / 100f) - 1f
+                    tvShadow.text = "阴影: ${"%.0f".format(v * 100)}"
+                    glSurfaceView.queueEvent { pipeline?.shadowAmt = v }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {
+                    val v = (seekBar.progress / 100f) - 1f
+                    glSurfaceView.queueEvent { pipeline?.shadowAmt = v }
+                    showToneMapPreview(tvShadow, seekBar)
+                }
+                override fun onStopTrackingTouch(seekBar: SeekBar) {
+                    val v = (seekBar.progress / 100f) - 1f
+                    prefs.edit().putFloat("shadow_amt", v).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+
+        val tvHighlight = TextView(this).apply {
+            text = "高光: ${"%.0f".format(highlightAmt * 100)}"
+            textSize = 15f
+            setPadding(48, 8, 48, 4)
+        }
+        val sbHighlight = SeekBar(this).apply {
+            max = 200
+            progress = ((highlightAmt + 1f) * 100).roundToInt().coerceIn(0, 200)
+            setPadding(48, 0, 48, 16)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    val v = (progress / 100f) - 1f
+                    tvHighlight.text = "高光: ${"%.0f".format(v * 100)}"
+                    glSurfaceView.queueEvent { pipeline?.highlightAmt = v }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {
+                    val v = (seekBar.progress / 100f) - 1f
+                    glSurfaceView.queueEvent { pipeline?.highlightAmt = v }
+                    showToneMapPreview(tvHighlight, seekBar)
+                }
+                override fun onStopTrackingTouch(seekBar: SeekBar) {
+                    val v = (seekBar.progress / 100f) - 1f
+                    prefs.edit().putFloat("highlight_amt", v).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+
+        layout.addView(tvShadow)
+        layout.addView(sbShadow)
+        layout.addView(tvHighlight)
+        layout.addView(sbHighlight)
+
+        val btnReset = Button(this).apply {
+            text = "恢复默认"
+            isAllCaps = false
+            setPadding(48, 24, 48, 24)
+            setTextColor(0xFFFF6B6B.toInt())
+            setBackgroundColor(0x22FF6B6B.toInt())
+            setOnClickListener {
+                switchDng.isChecked = true
+                applyDng(true)
+                switchMultiFrame.isChecked = true
+                sbFrameCount.progress = 2
+                tvFrameCount.text = "合成帧数: 4"
+                applyMultiFrame(true, 4)
+                sbBlOffset.progress = 32
+                tvBlOffset.text = "黑电平补偿: 0"
+                glSurfaceView.queueEvent { pipeline?.blackLevelOffset = 0f }
+                prefs.edit().putInt("black_level_offset", 0).apply()
+                sbWlOffset.progress = 256
+                tvWlOffset.text = "白电平补偿: 0"
+                glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = 0f }
+                prefs.edit().putInt("white_level_offset", 0).apply()
+                sbToneMapD.progress = 159
+                tvToneMapD.text = "色调 D（默认0.59）: 0.59"
+                glSurfaceView.queueEvent { pipeline?.toneMapD = 0.59f }
+                prefs.edit().putFloat("tone_map_d", 0.59f).apply()
+                sbToneMapE.progress = 4
+                tvToneMapE.text = "色调 E（默认0.14）: 0.14"
+                glSurfaceView.queueEvent { pipeline?.toneMapE = 0.14f }
+                prefs.edit().putFloat("tone_map_e", 0.14f).apply()
+                sbShadow.progress = 100
+                tvShadow.text = "阴影: 0"
+                glSurfaceView.queueEvent { pipeline?.shadowAmt = 0f }
+                prefs.edit().putFloat("shadow_amt", 0f).apply()
+                sbHighlight.progress = 100
+                tvHighlight.text = "高光: 0"
+                glSurfaceView.queueEvent { pipeline?.highlightAmt = 0f }
+                prefs.edit().putFloat("highlight_amt", 0f).apply()
+            }
+        }
+        layout.addView(btnReset)
 
         settingsDialog = AlertDialog.Builder(this)
             .setView(layout)
