@@ -41,7 +41,10 @@
         <activity
             android:name=".GalleryActivity"
             android:exported="false" />
-
+        <activity
+            android:name=".CoverageVisualizerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.CoverageDialog" />
 
     </application>
 

@@ -13,7 +13,8 @@ extern "C" JNIEXPORT jfloat JNICALL
 Java_com_classic_camera_LutEngine_generateLutAndCheckCoverage(
     JNIEnv* env, jobject thiz,
     jintArray orig_pixels, jintArray filt_pixels,
-    jint num_pixels, jfloatArray out_lut_array) {
+    jint num_pixels, jfloatArray out_lut_array,
+    jbooleanArray out_covered_array) {
 
     jint* orig = env->GetIntArrayElements(orig_pixels, nullptr);
     jint* filt = env->GetIntArrayElements(filt_pixels, nullptr);
@@ -21,27 +22,6 @@ Java_com_classic_camera_LutEngine_generateLutAndCheckCoverage(
     std::vector<Vec3> colorSum(TOTAL_NODES, {0, 0, 0});
     std::vector<float> weightSum(TOTAL_NODES, 0.0f);
     std::vector<bool> covered(TOTAL_NODES, false);
-
-    // 注入色彩锚点 (防止边缘崩溃)
-    auto addAnchor = [&](int r, int g, int b, float weight) {
-        int vx = std::min(LUT_SIZE - 1, r * LUT_SIZE / 256);
-        int vy = std::min(LUT_SIZE - 1, g * LUT_SIZE / 256);
-        int vz = std::min(LUT_SIZE - 1, b * LUT_SIZE / 256);
-        int idx = vx + vy * LUT_SIZE + vz * LUT_SIZE * LUT_SIZE;
-        colorSum[idx] = {colorSum[idx].r + r/255.0f * weight,
-                         colorSum[idx].g + g/255.0f * weight,
-                         colorSum[idx].b + b/255.0f * weight};
-        weightSum[idx] += weight;
-    };
-
-    addAnchor(0, 0, 0, 1000.0f);
-    addAnchor(255, 255, 255, 1000.0f);
-    addAnchor(255, 0, 0, 500.0f);
-    addAnchor(0, 255, 0, 500.0f);
-    addAnchor(0, 0, 255, 500.0f);
-    addAnchor(255, 255, 0, 500.0f);
-    addAnchor(0, 255, 255, 500.0f);
-    addAnchor(255, 0, 255, 500.0f);
 
     // 遍历像素对
     for (int i = 0; i < num_pixels; ++i) {
@@ -170,6 +150,13 @@ Java_com_classic_camera_LutEngine_generateLutAndCheckCoverage(
     }
 
     env->SetFloatArrayRegion(out_lut_array, 0, (jsize)outLen, lutOut.data());
+
+    // 写回 coverage 布尔数组
+    jboolean* covOut = env->GetBooleanArrayElements(out_covered_array, nullptr);
+    for (int i = 0; i < TOTAL_NODES; ++i) {
+        covOut[i] = covered[i] ? JNI_TRUE : JNI_FALSE;
+    }
+    env->ReleaseBooleanArrayElements(out_covered_array, covOut, 0);
 
     return (jfloat)coveredCount / (jfloat)TOTAL_NODES;
 }

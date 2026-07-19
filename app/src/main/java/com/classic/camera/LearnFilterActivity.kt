@@ -189,10 +189,11 @@ class LearnFilterActivity : AppCompatActivity() {
             try {
                 val totalNodes = LutEngine.LUT_SIZE * LutEngine.LUT_SIZE * LutEngine.LUT_SIZE
                 val outLut = FloatArray(totalNodes * 3)
+                val outCovered = BooleanArray(totalNodes)
 
                 val coverage = LutEngine.generateLutAndCheckCoverage(
                     allOrigPixels.toIntArray(), allFiltPixels.toIntArray(),
-                    allOrigPixels.size, outLut
+                    allOrigPixels.size, outLut, outCovered
                 )
 
                 runOnUiThread {
@@ -201,6 +202,8 @@ class LearnFilterActivity : AppCompatActivity() {
                     tvCoverage.text = "色彩覆盖率: ${pct}% (已累积 ${allOrigPixels.size} 像素)"
                     tvCoverage.setTextColor(if (coverage >= 0.3f) 0xFF4CAF50.toInt() else 0xFFFFA726.toInt())
                     btnFinishLearn.isEnabled = true
+                    CoverageVisualizer.pendingData = outCovered
+                    startActivity(android.content.Intent(this@LearnFilterActivity, CoverageVisualizerActivity::class.java))
                     Toast.makeText(this, "学习完成！色彩覆盖率 $pct%", Toast.LENGTH_LONG).show()
                     isLearning = false
                     btnStartLearn.text = "开始学习"
