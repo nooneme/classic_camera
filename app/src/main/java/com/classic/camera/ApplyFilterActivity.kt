@@ -1,5 +1,6 @@
 package com.classic.camera
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
@@ -43,13 +44,16 @@ class ApplyFilterActivity : AppCompatActivity() {
     private var filterFiles = listOf<File>()
     private var filterNames = listOf<String>()
 
-    private val imagePicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            selectedImageUri = uri
-            imagePreview.setImageURI(uri)
-            imagePreview.visibility = ImageView.VISIBLE
-            imagePlaceholder.visibility = LinearLayout.GONE
-            updateApplyButton()
+    private val imagePicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val uri = result.data?.data
+            if (uri != null) {
+                selectedImageUri = uri
+                imagePreview.setImageURI(uri)
+                imagePreview.visibility = ImageView.VISIBLE
+                imagePlaceholder.visibility = LinearLayout.GONE
+                updateApplyButton()
+            }
         }
     }
 
@@ -69,7 +73,7 @@ class ApplyFilterActivity : AppCompatActivity() {
         scrollView = findViewById(R.id.scrollView)
 
         imageArea.setOnClickListener {
-            imagePicker.launch("image/*")
+            imagePicker.launch(Intent(this, GalleryActivity::class.java))
         }
 
         loadFilters()

@@ -1,6 +1,7 @@
 package com.classic.camera
 
 import android.app.AlertDialog
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -49,25 +50,29 @@ class LearnFilterActivity : AppCompatActivity() {
     private var isLearning = false
     private var isAdding = false
 
-    private val originalPicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        Log.d(TAG, "originalPicker result: $uri")
-        if (uri != null) {
-            originalUri = uri
-            originalPreview.setImageURI(uri)
-            originalPreview.visibility = ImageView.VISIBLE
-            originalPlaceholder.visibility = LinearLayout.GONE
-            updateButtons()
-        }
-    }
+    private var pendingTarget: String? = null
 
-    private val filterPicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        Log.d(TAG, "filterPicker result: $uri")
-        if (uri != null) {
-            filterUri = uri
-            filterPreview.setImageURI(uri)
-            filterPreview.visibility = ImageView.VISIBLE
-            filterPlaceholder.visibility = LinearLayout.GONE
-            updateButtons()
+    private val galleryLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val uri = result.data?.data
+            if (uri != null) {
+                Log.d(TAG, "gallery result: $uri for $pendingTarget")
+                when (pendingTarget) {
+                    "original" -> {
+                        originalUri = uri
+                        originalPreview.setImageURI(uri)
+                        originalPreview.visibility = ImageView.VISIBLE
+                        originalPlaceholder.visibility = LinearLayout.GONE
+                    }
+                    "filter" -> {
+                        filterUri = uri
+                        filterPreview.setImageURI(uri)
+                        filterPreview.visibility = ImageView.VISIBLE
+                        filterPlaceholder.visibility = LinearLayout.GONE
+                    }
+                }
+                updateButtons()
+            }
         }
     }
 
@@ -87,11 +92,13 @@ class LearnFilterActivity : AppCompatActivity() {
         tvCoverage = findViewById(R.id.tvCoverage)
 
         originalImageArea.setOnClickListener {
-            originalPicker.launch("image/*")
+            pendingTarget = "original"
+            galleryLauncher.launch(Intent(this, GalleryActivity::class.java))
         }
 
         filterImageArea.setOnClickListener {
-            filterPicker.launch("image/*")
+            pendingTarget = "filter"
+            galleryLauncher.launch(Intent(this, GalleryActivity::class.java))
         }
 
         btnAddImages.setOnClickListener {
