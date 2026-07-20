@@ -8,10 +8,12 @@ import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.widget.Button
+import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,6 +35,7 @@ class LearnFilterActivity : AppCompatActivity() {
     private lateinit var btnStartLearn: Button
     private lateinit var btnFinishLearn: Button
     private lateinit var tvCoverage: TextView
+    private lateinit var spFitMethod: Spinner
 
     /** 最近一次生成的 LUT 数据 */
     private var lastLut: FloatArray? = null
@@ -49,6 +52,9 @@ class LearnFilterActivity : AppCompatActivity() {
     /** 是否正在学习中 */
     private var isLearning = false
     private var isAdding = false
+
+    /** 是否使用多项式拟合模式 */
+    private var isPolyFitMode = false
 
     private var pendingTarget: String? = null
 
@@ -90,6 +96,26 @@ class LearnFilterActivity : AppCompatActivity() {
         btnStartLearn = findViewById(R.id.btnStartLearn)
         btnFinishLearn = findViewById(R.id.btnFinishLearn)
         tvCoverage = findViewById(R.id.tvCoverage)
+        spFitMethod = findViewById(R.id.spFitMethod)
+
+        val fitMethods = arrayOf("标准拟合（需大量样本）", "多项式拟合（少量样本）")
+        val spinnerAdapter = object : ArrayAdapter<String>(this, R.layout.spinner_dropdown_item, fitMethods) {
+            override fun getView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+                val v = super.getView(position, convertView, parent) as android.widget.TextView
+                v.setTextColor(0xFFDDDDDD.toInt())
+                return v
+            }
+        }
+        spFitMethod.adapter = spinnerAdapter
+        spFitMethod.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, pos: Int, id: Long) {
+                isPolyFitMode = pos == 1
+                tvCoverage.text = if (isPolyFitMode) "多项式拟合模式：少量样本即可覆盖全色域"
+                                  else "已累积 ${allOrigPixels.size} 像素"
+                tvCoverage.setTextColor(0xFF888888.toInt())
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
 
         originalImageArea.setOnClickListener {
             pendingTarget = "original"
@@ -189,25 +215,58 @@ class LearnFilterActivity : AppCompatActivity() {
             try {
                 val totalNodes = LutEngine.LUT_SIZE * LutEngine.LUT_SIZE * LutEngine.LUT_SIZE
                 val outLut = FloatArray(totalNodes * 3)
-                val outCovered = BooleanArray(totalNodes)
 
-                val coverage = LutEngine.generateLutAndCheckCoverage(
-                    allOrigPixels.toIntArray(), allFiltPixels.toIntArray(),
-                    allOrigPixels.size, outLut, outCovered
-                )
+                if (isPolyFitMode) {
+                    val stats = FloatArray(7)
+                    LutEngine.fitPolynomialLut(
+                        allOrigPixels.toIntArray(), allFiltPixels.toIntArray(),
+                        allOrigPixels.size, outLut, stats
+                    )
+                    val trainAvg = stats[0]; val validAvg = stats[1]
+                    val trainMax = stats[2]; val validMax = stats[3]
+                    val worstR = stats[4].toInt(); val worstG = stats[5].toInt(); val worstB = stats[6].toInt()
+                    val trainAvg255 = (trainAvg * 255).toInt()
+                    val validAvg255 = (validAvg * 255).toInt()
+                    val trainMax255 = (trainMax * 255).toInt()
+                    val validMax255 = (validMax * 255).toInt()
+                    val ratio = if (validAvg > 0f) trainAvg / validAvg else 1f
+                    val ratioStr = "%.2f".format(ratio)
+                    val capacityText = when {
+                        ratio < 0.6f -> "可能过拟合(训练<<验证)，试试减少样本"
+                        ratio > 0.9f -> "容量充足(训练≈验证)"
+                        else -> "容量适中"
+                    }
 
-                runOnUiThread {
-                    lastLut = outLut
-                    val pct = (coverage * 100).toInt()
-                    tvCoverage.text = "色彩覆盖率: ${pct}% (已累积 ${allOrigPixels.size} 像素)"
-                    tvCoverage.setTextColor(if (coverage >= 0.3f) 0xFF4CAF50.toInt() else 0xFFFFA726.toInt())
-                    btnFinishLearn.isEnabled = true
-                    CoverageVisualizer.pendingData = outCovered
-                    startActivity(android.content.Intent(this@LearnFilterActivity, CoverageVisualizerActivity::class.java))
-                    Toast.makeText(this, "学习完成！色彩覆盖率 $pct%", Toast.LENGTH_LONG).show()
-                    isLearning = false
-                    btnStartLearn.text = "开始学习"
-                    updateButtons()
+                    runOnUiThread {
+                        lastLut = outLut
+                        tvCoverage.text = "训练平均误差 ${"%.4f".format(trainAvg)}（≈${trainAvg255}/255）\n验证平均误差 ${"%.4f".format(validAvg)}（≈${validAvg255}/255）\n训练最大误差 ${"%.4f".format(trainMax)}（≈${trainMax255}/255）\n验证最大误差 ${"%.4f".format(validMax)}（≈${validMax255}/255）\n最差输入颜色 (${worstR},${worstG},${worstB})  ${capacityText}"
+                        tvCoverage.setTextColor(android.graphics.Color.rgb(worstR, worstG, worstB))
+                        btnFinishLearn.isEnabled = true
+                        Toast.makeText(this, "拟合完成！训练均差=${trainAvg}, 验证均差=$validAvg, 验证最大=$validMax", Toast.LENGTH_LONG).show()
+                        isLearning = false
+                        btnStartLearn.text = "开始学习"
+                        updateButtons()
+                    }
+                } else {
+                    val outCovered = BooleanArray(totalNodes)
+                    val coverage = LutEngine.generateLutAndCheckCoverage(
+                        allOrigPixels.toIntArray(), allFiltPixels.toIntArray(),
+                        allOrigPixels.size, outLut, outCovered
+                    )
+
+                    runOnUiThread {
+                        lastLut = outLut
+                        val pct = (coverage * 100).toInt()
+                        tvCoverage.text = "色彩覆盖率: ${pct}% (已累积 ${allOrigPixels.size} 像素)"
+                        tvCoverage.setTextColor(if (coverage >= 0.3f) 0xFF4CAF50.toInt() else 0xFFFFA726.toInt())
+                        btnFinishLearn.isEnabled = true
+                        CoverageVisualizer.pendingData = outCovered
+                        startActivity(android.content.Intent(this@LearnFilterActivity, CoverageVisualizerActivity::class.java))
+                        Toast.makeText(this, "学习完成！色彩覆盖率 $pct%", Toast.LENGTH_LONG).show()
+                        isLearning = false
+                        btnStartLearn.text = "开始学习"
+                        updateButtons()
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "learning failed", e)

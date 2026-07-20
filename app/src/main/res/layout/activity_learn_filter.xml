@@ -127,6 +127,33 @@
             android:visibility="gone" />
     </FrameLayout>
 
+    <!-- 拟合方式下拉 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="24dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="4dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="拟合方式"
+            android:textColor="#AAAAAA"
+            android:textSize="14sp" />
+
+        <Spinner
+            android:id="@+id/spFitMethod"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:backgroundTint="#4A90D9"
+            android:popupBackground="#333333" />
+    </LinearLayout>
+
     <!-- 说明文字 -->
     <TextView
         android:layout_width="match_parent"
@@ -135,7 +162,7 @@
         android:textColor="#AAAAAA"
         android:textSize="13sp"
         android:paddingHorizontal="24dp"
-        android:paddingTop="12dp"
+        android:paddingTop="4dp"
         android:paddingBottom="4dp" />
 
     <!-- 覆盖率和滤镜名称 -->

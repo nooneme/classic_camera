@@ -122,15 +122,23 @@ class FilterActivity : AppCompatActivity() {
             )
             val tvSize = view.findViewById<TextView>(R.id.tvFilterSize)
             val btnDelete = view.findViewById<TextView>(R.id.btnDelete)
+            val btnVisualize = view.findViewById<TextView>(R.id.btnVisualize)
             if (item.file != null) {
                 tvSize.text = formatFileSize(item.file.length())
                 tvSize.visibility = View.VISIBLE
                 btnDelete.visibility = View.VISIBLE
                 btnDelete.setOnClickListener { confirmDelete(item, pos) }
+                btnVisualize.visibility = View.VISIBLE
+                btnVisualize.setOnClickListener {
+                    VectorFieldRenderer.pendingLut = LutUtils.loadCubeFile(item.file)
+                    startActivity(Intent(this@FilterActivity, VectorFieldActivity::class.java)
+                        .putExtra("filter_name", item.name))
+                }
             } else {
                 tvSize.text = ""
                 tvSize.visibility = View.INVISIBLE
                 btnDelete.visibility = View.GONE
+                btnVisualize.visibility = View.GONE
             }
             return view
         }

@@ -25,6 +25,17 @@
         android:layout_marginEnd="8dp" />
 
     <TextView
+        android:id="@+id/btnVisualize"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:gravity="center"
+        android:text="◎"
+        android:textColor="#4A90D9"
+        android:textSize="14sp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:visibility="gone" />
+
+    <TextView
         android:id="@+id/btnDelete"
         android:layout_width="36dp"
         android:layout_height="36dp"

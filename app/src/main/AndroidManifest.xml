@@ -45,6 +45,10 @@
             android:name=".CoverageVisualizerActivity"
             android:exported="false"
             android:theme="@style/Theme.CoverageDialog" />
+        <activity
+            android:name=".VectorFieldActivity"
+            android:exported="false"
+            android:theme="@style/Theme.CoverageDialog" />
 
     </application>
 
