@@ -133,5 +133,11 @@ class ManualController {
         /** 滑块的"手动区"分辨率：progress 1 ~ RESOLUTION 映射整个硬件范围。 */
         const val SHUTTER_RESOLUTION = 10000
         const val ISO_RESOLUTION = 10000
+
+        fun formatExposureNs(ns: Long): String {
+            val seconds = ns / 1_000_000_000.0
+            return if (seconds >= 1.0) "%.2f\"".format(seconds)
+            else "1/%.0f".format(1.0 / seconds)
+        }
     }
 }

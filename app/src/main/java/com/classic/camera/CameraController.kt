@@ -72,6 +72,9 @@ class CameraController(
         cfaType: Int
     ) -> Bitmap?)? = null
 
+    // 实时曝光参数回调（每帧预览时触发，用于状态栏显示实际 ISO/快门）
+    var onExposureInfo: ((iso: Int?, exposureNs: Long?) -> Unit)? = null
+
     // 拍照同步：等 Image 和 CaptureResult 都到达
     private var pendingImage: Image? = null
     private var pendingResult: TotalCaptureResult? = null
@@ -550,6 +553,10 @@ class CameraController(
                         }
                     }
                     lastRepeatingResult = result
+                    onExposureInfo?.invoke(
+                        result.get(CaptureResult.SENSOR_SENSITIVITY),
+                        result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+                    )
                 }
             }
             captureCb = cb
@@ -719,7 +726,7 @@ class CameraController(
     }
 
     /**
-     * 通过 MediaStore 写入共享目录 Pictures/gufa/，可在文件管理器/相册直接看到。
+     * 通过 MediaStore 写入系统相机目录 DCIM/Camera/，可在文件管理器/相册直接看到。
      * 返回文件显示名（供 Toast）。
      */
     private fun writeDng(
@@ -738,7 +745,7 @@ class CameraController(
             put(MediaStore.Images.Media.MIME_TYPE, "image/x-adobe-dng")
             // Android 10+ 用 RELATIVE_PATH 指定子目录（相对共享根 Pictures/）
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/gufa")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_DCIM}/Camera")
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             }
         }

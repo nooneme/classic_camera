@@ -56,6 +56,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var sbIso: SeekBar
     private lateinit var tvShutterSpeed: TextView
     private lateinit var tvIso: TextView
+    // 状态栏
+    private lateinit var tvStatusShutter: TextView
+    private lateinit var tvStatusIso: TextView
+    private lateinit var tvStatusFilter: TextView
 
     private var pipeline: RawPipeline? = null
     private var gpuAlignMerge: GpuAlignMerge? = null
@@ -90,6 +94,7 @@ class MainActivity : AppCompatActivity() {
         if (result.resultCode != RESULT_OK) return@registerForActivityResult
         val path = result.data?.getStringExtra("filter_path") ?: ""
         currentFilterPath = path
+        tvStatusFilter.text = if (path.isNotEmpty()) "滤镜: ${java.io.File(path).nameWithoutExtension}" else "滤镜: 无"
         // 先在主线程加载 .cube 文件（避免 GL 线程做 I/O）
         val lut = if (path.isNotEmpty()) LutUtils.loadCubeFile(java.io.File(path)) else null
         glSurfaceView.queueEvent {
@@ -131,6 +136,10 @@ class MainActivity : AppCompatActivity() {
         sbIso = findViewById(R.id.sbIso)
         tvShutterSpeed = findViewById(R.id.tvShutterSpeed)
         tvIso = findViewById(R.id.tvIso)
+        // 状态栏
+        tvStatusShutter = findViewById(R.id.tvStatusShutter)
+        tvStatusIso = findViewById(R.id.tvStatusIso)
+        tvStatusFilter = findViewById(R.id.tvStatusFilter)
 
         // GL 上下文：仅设置 MAJOR=3，EGL 自动返回设备支持的最高 3.x 版本（S23→ES 3.2）
         glSurfaceView.setEGLContextFactory(object : GLSurfaceView.EGLContextFactory {
@@ -150,6 +159,7 @@ class MainActivity : AppCompatActivity() {
             pipeline?.toneMapE = it.getFloat("tone_map_e", 0.14f)
             pipeline?.shadowAmt = it.getFloat("shadow_amt", 0f)
             pipeline?.highlightAmt = it.getFloat("highlight_amt", 0f)
+            pipeline?.shadowHighlightMid = it.getFloat("shadow_highlight_mid", 0.5f)
         }
         glSurfaceView.setRenderer(pipeline)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
@@ -200,9 +210,9 @@ class MainActivity : AppCompatActivity() {
                         cameraController?.startMultiCapture { dngName, jpgName ->
                             runOnUiThread {
                                 val msg = if (dngName.isNotEmpty())
-                                    "多帧合成: $dngName 和 $jpgName → Pictures/gufa/"
+                                    "多帧合成: $dngName 和 $jpgName → DCIM/Camera/"
                                 else
-                                    "多帧合成: $jpgName → Pictures/gufa/"
+                                    "多帧合成: $jpgName → DCIM/Camera/"
                                 Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
                             }
                         }
@@ -210,9 +220,9 @@ class MainActivity : AppCompatActivity() {
                         cameraController?.capture { dngName, jpgName, _ ->
                             runOnUiThread {
                                 val msg = if (dngName.isNotEmpty())
-                                    "$dngName 和 $jpgName → Pictures/gufa/"
+                                    "$dngName 和 $jpgName → DCIM/Camera/"
                                 else
-                                    "$jpgName → Pictures/gufa/"
+                                    "$jpgName → DCIM/Camera/"
                                 Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
                             }
                         }
@@ -294,12 +304,16 @@ class MainActivity : AppCompatActivity() {
 
     /** 更新快门速度显示标签。 */
     private fun updateLabelForShutter(progress: Int) {
-        tvShutterSpeed.text = manualController?.shutterProgressToLabel(progress) ?: "?"
+        val label = manualController?.shutterProgressToLabel(progress) ?: "?"
+        tvShutterSpeed.text = label
+        tvStatusShutter.text = "快门 $label"
     }
 
     /** 更新 ISO 显示标签。 */
     private fun updateLabelForIso(progress: Int) {
-        tvIso.text = manualController?.isoProgressToLabel(progress) ?: "?"
+        val label = manualController?.isoProgressToLabel(progress) ?: "?"
+        tvIso.text = label
+        tvStatusIso.text = "ISO $label"
     }
 
     /** 跨越段落线时震动反馈。 */
@@ -618,6 +632,38 @@ class MainActivity : AppCompatActivity() {
         layout.addView(tvHighlight)
         layout.addView(sbHighlight)
 
+        // ---- 阴影/高光分界点 ----
+        val shMid = prefs.getFloat("shadow_highlight_mid", 0.5f)
+        val tvShMid = TextView(this).apply {
+            text = "分界点: ${"%.2f".format(shMid)}"
+            textSize = 15f
+            setPadding(48, 16, 48, 4)
+        }
+        val sbShMid = SeekBar(this).apply {
+            max = 100
+            progress = ((shMid - 0.1f) * 100).roundToInt().coerceIn(0, 100)
+            setPadding(48, 0, 48, 16)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    val v = 0.1f + progress / 100f
+                    tvShMid.text = "分界点: ${"%.2f".format(v)}"
+                    glSurfaceView.queueEvent { pipeline?.shadowHighlightMid = v }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {
+                    val v = 0.1f + seekBar.progress / 100f
+                    glSurfaceView.queueEvent { pipeline?.shadowHighlightMid = v }
+                    showToneMapPreview(tvShMid, seekBar)
+                }
+                override fun onStopTrackingTouch(seekBar: SeekBar) {
+                    val v = 0.1f + seekBar.progress / 100f
+                    prefs.edit().putFloat("shadow_highlight_mid", v).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+        layout.addView(tvShMid)
+        layout.addView(sbShMid)
+
         val btnReset = Button(this).apply {
             text = "恢复默认"
             isAllCaps = false
@@ -655,6 +701,10 @@ class MainActivity : AppCompatActivity() {
                 tvHighlight.text = "高光: 0"
                 glSurfaceView.queueEvent { pipeline?.highlightAmt = 0f }
                 prefs.edit().putFloat("highlight_amt", 0f).apply()
+                sbShMid.progress = 40
+                tvShMid.text = "分界点: 0.50"
+                glSurfaceView.queueEvent { pipeline?.shadowHighlightMid = 0.5f }
+                prefs.edit().putFloat("shadow_highlight_mid", 0.5f).apply()
             }
         }
         layout.addView(btnReset)
@@ -889,6 +939,15 @@ class MainActivity : AppCompatActivity() {
                     latch.await(15, TimeUnit.SECONDS)
                     if (error != null) throw RuntimeException("GPU multi-frame failed", error)
                     result!!
+                }
+            }
+        }
+        // 实时曝光参数回调：自动模式时从 CaptureResult 读取实际值
+        controller.onExposureInfo = { iso, exposureNs ->
+            runOnUiThread {
+                if (iso != null && exposureNs != null) {
+                    tvStatusShutter.text = "快门 ${ManualController.formatExposureNs(exposureNs)}"
+                    tvStatusIso.text = "ISO $iso"
                 }
             }
         }

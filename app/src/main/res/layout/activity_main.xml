@@ -11,6 +11,49 @@
         android:layout_height="0dp"
         android:layout_weight="1" />
 
+    <!-- 实时状态栏：快门 / ISO / 滤镜 -->
+    <LinearLayout
+        android:id="@+id/statusBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="4dp"
+        android:background="#222222">
+
+        <TextView
+            android:id="@+id/tvStatusShutter"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="快门 --"
+            android:textColor="#CCCCCC"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvStatusIso"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="ISO --"
+            android:textColor="#CCCCCC"
+            android:textSize="12sp"
+            android:gravity="center" />
+
+        <TextView
+            android:id="@+id/tvStatusFilter"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="滤镜: 无"
+            android:textColor="#CCCCCC"
+            android:textSize="12sp"
+            android:gravity="end"
+            android:maxLines="1"
+            android:ellipsize="end" />
+    </LinearLayout>
+
     <!-- 手动控制栏：快门速度 + ISO（滑到最左 = Auto，过段落线 = 手动） -->
     <LinearLayout
         android:id="@+id/manualControlBar"
@@ -114,7 +157,7 @@
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingVertical="12dp"
+        android:paddingVertical="0dp"
         android:background="#222222">
 
         <!-- 滤镜按钮：快门左边与屏幕边缘的中间位置 -->
@@ -159,7 +202,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:scrollbars="none"
-        android:background="#111111">
+        android:background="#222222">
 
         <LinearLayout
             android:id="@+id/lensButtonBar"

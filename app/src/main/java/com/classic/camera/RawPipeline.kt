@@ -46,6 +46,7 @@ class RawPipeline : GLSurfaceView.Renderer {
     @Volatile var toneMapE = 0.14f
     @Volatile var shadowAmt = 0f
     @Volatile var highlightAmt = 0f
+    @Volatile var shadowHighlightMid = 0.5f
 
     private var rawDirectBuf: java.nio.ByteBuffer? = null
     private var texAllocated = false
@@ -65,6 +66,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         // tone mapping
         var uToneMapD = 0; var uToneMapE = 0
         var uShadowAmt = 0; var uHighlightAmt = 0
+        var uShadowHighlightMid = 0
         // LUT
         var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0
         // LSC
@@ -90,6 +92,7 @@ class RawPipeline : GLSurfaceView.Renderer {
             uToneMapE = GLES30.glGetUniformLocation(id, "uToneMapE")
             uShadowAmt = GLES30.glGetUniformLocation(id, "uShadowAmt")
             uHighlightAmt = GLES30.glGetUniformLocation(id, "uHighlightAmt")
+            uShadowHighlightMid = GLES30.glGetUniformLocation(id, "uShadowHighlightMid")
             lookupLut()
         }
 
@@ -248,6 +251,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1f(u.uToneMapE, toneMapE)
         GLES30.glUniform1f(u.uShadowAmt, shadowAmt)
         GLES30.glUniform1f(u.uHighlightAmt, highlightAmt)
+        GLES30.glUniform1f(u.uShadowHighlightMid, shadowHighlightMid)
         GLES30.glUniform2f(u.uAspectScale, aspectX, aspectY)
     }
 
@@ -381,6 +385,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1f(uniBilinear.uToneMapE, 0.14f)
         GLES30.glUniform1f(uniBilinear.uShadowAmt, 0f)
         GLES30.glUniform1f(uniBilinear.uHighlightAmt, 0f)
+        GLES30.glUniform1f(uniBilinear.uShadowHighlightMid, 0.5f)
         drawQuad(uniBilinear)
     }
 
@@ -650,6 +655,7 @@ uniform float uToneMapD;
 uniform float uToneMapE;
 uniform float uShadowAmt;
 uniform float uHighlightAmt;
+uniform float uShadowHighlightMid;
 in vec2 vUV;
 out vec4 frag;
 
@@ -681,11 +687,12 @@ vec3 applyLUT(vec3 color) {
 }
 
 vec3 applyShadowHighlight(vec3 color) {
-    float pLow = max(1.0 - uShadowAmt, 0.001);
-    float pHigh = max(1.0 - uHighlightAmt, 0.001);
-    vec3 resultLow = pow(max(color / 0.5, 0.0), vec3(pLow)) * 0.5;
-    vec3 resultHigh = pow(max((color - 0.5) / 0.5, 0.0), vec3(pHigh)) * 0.5 + 0.5;
-    vec3 mask = step(vec3(0.5), color);
+    float mid = uShadowHighlightMid;
+    float pLow = max(1.0 - uShadowAmt * 3.0, 0.001);
+    float pHigh = max(1.0 - uHighlightAmt * 3.0, 0.001);
+    vec3 resultLow = pow(max(color / mid, 0.0), vec3(pLow)) * mid;
+    vec3 resultHigh = pow(max((color - mid) / (1.0 - mid), 0.0), vec3(pHigh)) * (1.0 - mid) + mid;
+    vec3 mask = step(vec3(mid), color);
     return mix(resultLow, resultHigh, mask);
 }
 
