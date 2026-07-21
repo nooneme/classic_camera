@@ -49,6 +49,10 @@
             android:name=".VectorFieldActivity"
             android:exported="false"
             android:theme="@style/Theme.CoverageDialog" />
+        <activity
+            android:name=".CurveEditorActivity"
+            android:exported="false"
+            android:theme="@style/Theme.CoverageDialog" />
 
     </application>
 

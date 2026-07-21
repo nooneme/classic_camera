@@ -16,6 +16,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         private const val GL_R16 = 0x822A
         private const val GL_RGBA16F = 0x881A
         private const val GL_HALF_FLOAT = 0x140B
+        private const val GL_R8 = 0x8229
     }
 
 
@@ -44,9 +45,6 @@ class RawPipeline : GLSurfaceView.Renderer {
     var cfaType = 2
     @Volatile var toneMapD = 0.59f
     @Volatile var toneMapE = 0.14f
-    @Volatile var shadowAmt = 0f
-    @Volatile var highlightAmt = 0f
-    @Volatile var shadowHighlightMid = 0.5f
 
     private var rawDirectBuf: java.nio.ByteBuffer? = null
     private var texAllocated = false
@@ -65,10 +63,10 @@ class RawPipeline : GLSurfaceView.Renderer {
         var uOrientation = 0; var uMirror = 0
         // tone mapping
         var uToneMapD = 0; var uToneMapE = 0
-        var uShadowAmt = 0; var uHighlightAmt = 0
-        var uShadowHighlightMid = 0
         // LUT
         var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0
+        // tone curve
+        var uToneCurveLUT = 0
         // LSC
         var uLscGainTex = 0; var uLscGridSize = 0; var uEnableLsc = 0
 
@@ -90,9 +88,7 @@ class RawPipeline : GLSurfaceView.Renderer {
             uEnableLsc = GLES30.glGetUniformLocation(id, "uEnableLsc")
             uToneMapD = GLES30.glGetUniformLocation(id, "uToneMapD")
             uToneMapE = GLES30.glGetUniformLocation(id, "uToneMapE")
-            uShadowAmt = GLES30.glGetUniformLocation(id, "uShadowAmt")
-            uHighlightAmt = GLES30.glGetUniformLocation(id, "uHighlightAmt")
-            uShadowHighlightMid = GLES30.glGetUniformLocation(id, "uShadowHighlightMid")
+            uToneCurveLUT = GLES30.glGetUniformLocation(id, "uToneCurveLUT")
             lookupLut()
         }
 
@@ -111,6 +107,11 @@ class RawPipeline : GLSurfaceView.Renderer {
     @Volatile var lutFloatArray: FloatArray? = null
     private var lutTextureId = 0
     private var lutEnabled = false
+
+    // ---- 色调曲线 ----
+    @Volatile var toneCurvePoints: FloatArray? = null
+    private var toneCurveTexId = 0
+    @Volatile var toneCurveDirty = false
 
     // ---- LSC 镜头阴影校正 ----
     @Volatile var lscGainMap: FloatArray? = null
@@ -190,6 +191,17 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
         lastGainMapRef = null
 
+        // 色调曲线 LUT 纹理 (256x1, R8)
+        val tcTexs = IntArray(1)
+        GLES30.glGenTextures(1, tcTexs, 0)
+        toneCurveTexId = tcTexs[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, toneCurveTexId)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        uploadIdentityToneCurve()
+
         // GPU 多帧管线初始化（context 已就绪）
         onGluReady?.invoke()
     }
@@ -249,9 +261,9 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1i(u.uMirror, if (mirror) 1 else 0)
         GLES30.glUniform1f(u.uToneMapD, toneMapD)
         GLES30.glUniform1f(u.uToneMapE, toneMapE)
-        GLES30.glUniform1f(u.uShadowAmt, shadowAmt)
-        GLES30.glUniform1f(u.uHighlightAmt, highlightAmt)
-        GLES30.glUniform1f(u.uShadowHighlightMid, shadowHighlightMid)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE3)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, toneCurveTexId)
+        GLES30.glUniform1i(u.uToneCurveLUT, 3)
         GLES30.glUniform2f(u.uAspectScale, aspectX, aspectY)
     }
 
@@ -383,9 +395,9 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1i(uniBilinear.uEnableLsc, 0)
         GLES30.glUniform1f(uniBilinear.uToneMapD, 0.59f)
         GLES30.glUniform1f(uniBilinear.uToneMapE, 0.14f)
-        GLES30.glUniform1f(uniBilinear.uShadowAmt, 0f)
-        GLES30.glUniform1f(uniBilinear.uHighlightAmt, 0f)
-        GLES30.glUniform1f(uniBilinear.uShadowHighlightMid, 0.5f)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE3)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, toneCurveTexId)
+        GLES30.glUniform1i(uniBilinear.uToneCurveLUT, 3)
         drawQuad(uniBilinear)
     }
 
@@ -531,6 +543,43 @@ class RawPipeline : GLSurfaceView.Renderer {
         return buf
     }
 
+    // ====================== 色调曲线 ======================
+
+    private val TONE_CURVE_LUT_SIZE = 256
+
+    /** 上传 y=x 恒等曲线到纹理。 */
+    private fun uploadIdentityToneCurve() {
+        val buf = java.nio.ByteBuffer.allocateDirect(TONE_CURVE_LUT_SIZE).order(java.nio.ByteOrder.nativeOrder())
+        for (i in 0 until TONE_CURVE_LUT_SIZE) {
+            buf.put((i * 255 / (TONE_CURVE_LUT_SIZE - 1)).toByte())
+        }
+        buf.rewind()
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, toneCurveTexId)
+        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GL_R8, TONE_CURVE_LUT_SIZE, 1, 0, GLES30.GL_RED, GLES30.GL_UNSIGNED_BYTE, buf)
+    }
+
+    /** 从 float[256] LUT 更新纹理。 */
+    private fun uploadToneCurveLUT(lut: FloatArray) {
+        val buf = java.nio.ByteBuffer.allocateDirect(TONE_CURVE_LUT_SIZE).order(java.nio.ByteOrder.nativeOrder())
+        for (i in 0 until TONE_CURVE_LUT_SIZE.coerceAtMost(lut.size)) {
+            buf.put((lut[i].coerceIn(0f, 1f) * 255f).toInt().coerceIn(0, 255).toByte())
+        }
+        buf.rewind()
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, toneCurveTexId)
+        GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, TONE_CURVE_LUT_SIZE, 1, GLES30.GL_RED, GLES30.GL_UNSIGNED_BYTE, buf)
+    }
+
+    /** 设置色调曲线（GL 线程中调用）。null = 重置为恒等曲线。 */
+    fun setToneCurve(points: FloatArray?) {
+        toneCurvePoints = points
+        if (points == null) {
+            uploadIdentityToneCurve()
+        } else {
+            val lut = ToneCurveEngine.generateLUT(points, TONE_CURVE_LUT_SIZE)
+            uploadToneCurveLUT(lut)
+        }
+    }
+
     // ====================== 资源管理 ======================
 
     private fun checkGlError(op: String) {
@@ -571,6 +620,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         if (texId != 0) { GLES30.glDeleteTextures(1, intArrayOf(texId), 0); texId = 0 }
         if (lutTextureId != 0) { GLES30.glDeleteTextures(1, intArrayOf(lutTextureId), 0); lutTextureId = 0 }
         if (lscTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(lscTexId), 0); lscTexId = 0 }
+        if (toneCurveTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(toneCurveTexId), 0); toneCurveTexId = 0 }
         if (progBilinear != 0) { GLES30.glDeleteProgram(progBilinear); progBilinear = 0 }
     }
 
@@ -653,9 +703,7 @@ uniform vec2 uLscGridSize;
 uniform bool uEnableLsc;
 uniform float uToneMapD;
 uniform float uToneMapE;
-uniform float uShadowAmt;
-uniform float uHighlightAmt;
-uniform float uShadowHighlightMid;
+uniform sampler2D uToneCurveLUT;
 in vec2 vUV;
 out vec4 frag;
 
@@ -686,14 +734,10 @@ vec3 applyLUT(vec3 color) {
     return texture(uLutTexture, coord).rgb;
 }
 
-vec3 applyShadowHighlight(vec3 color) {
-    float mid = uShadowHighlightMid;
-    float pLow = max(1.0 - uShadowAmt * 3.0, 0.001);
-    float pHigh = max(1.0 - uHighlightAmt * 3.0, 0.001);
-    vec3 resultLow = pow(max(color / mid, 0.0), vec3(pLow)) * mid;
-    vec3 resultHigh = pow(max((color - mid) / (1.0 - mid), 0.0), vec3(pHigh)) * (1.0 - mid) + mid;
-    vec3 mask = step(vec3(mid), color);
-    return mix(resultLow, resultHigh, mask);
+vec3 applyToneCurve(vec3 color) {
+    float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    float mapped = texture(uToneCurveLUT, vec2(luminance, 0.5)).r;
+    return color * (mapped / max(luminance, 0.001));
 }
 
 void main() {
@@ -711,7 +755,7 @@ void main() {
     rgb = max(rgb, 0.0);
     const float a = 2.51, b = 0.03, c = 2.43;
     rgb = rgb * (a * rgb + b) / (rgb * (c * rgb + uToneMapD) + uToneMapE);
-    rgb = applyShadowHighlight(rgb);
+    rgb = applyToneCurve(rgb);
     rgb = mix(12.92 * rgb, 1.055 * pow(rgb, vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), rgb));
     if (uEnableLut) { rgb = applyLUT(rgb); }
     frag = vec4(rgb, 1.0);

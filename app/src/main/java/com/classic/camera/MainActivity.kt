@@ -152,15 +152,18 @@ class MainActivity : AppCompatActivity() {
             }
         })
         pipeline = RawPipeline()
-        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).also {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.also {
             pipeline?.blackLevelOffset = it.getInt("black_level_offset", 0).toFloat()
             pipeline?.whiteLevelOffset = it.getInt("white_level_offset", 0).toFloat()
             pipeline?.toneMapD = it.getFloat("tone_map_d", 0.59f)
             pipeline?.toneMapE = it.getFloat("tone_map_e", 0.14f)
-            pipeline?.shadowAmt = it.getFloat("shadow_amt", 0f)
-            pipeline?.highlightAmt = it.getFloat("highlight_amt", 0f)
-            pipeline?.shadowHighlightMid = it.getFloat("shadow_highlight_mid", 0.5f)
         }
+        // 加载色调曲线
+        val savedCurve = ToneCurve.load(prefs)
+        val toneCurveNativeArray = savedCurve.toNativeArray()
+        pipeline?.toneCurvePoints = toneCurveNativeArray
+
         glSurfaceView.setRenderer(pipeline)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
 
@@ -170,6 +173,10 @@ class MainActivity : AppCompatActivity() {
         pipeline?.onGluReady = {
             gpuAligner.init()
             Log.d(LOG_TAG, "GPU multi-frame pipeline ready = ${gpuAligner.isSupported()}")
+            // GL 上下文已就绪，初始化色调曲线纹理
+            pipeline?.toneCurvePoints?.let {
+                pipeline?.setToneCurve(it)
+            }
         }
 
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -375,8 +382,8 @@ class MainActivity : AppCompatActivity() {
             cameraController?.multiFrameCount = n
         }
 
-        val saveDng = prefs.getBoolean("save_dng", true)
-        val multiFrame = prefs.getBoolean("multi_frame", true)
+        val saveDng = prefs.getBoolean("save_dng", false)
+        val multiFrame = prefs.getBoolean("multi_frame", false)
         val multiFrameCount = prefs.getInt("multi_frame_count", 4)
         val blOffset = prefs.getInt("black_level_offset", 0)
         val wlOffset = prefs.getInt("white_level_offset", 0)
@@ -568,101 +575,43 @@ class MainActivity : AppCompatActivity() {
         layout.addView(tvToneMapE)
         layout.addView(sbToneMapE)
 
-        // ---- 阴影/高光 S 曲线 ----
-        val shadowAmt = prefs.getFloat("shadow_amt", 0f)
-        val highlightAmt = prefs.getFloat("highlight_amt", 0f)
-        val tvShadow = TextView(this).apply {
-            text = "阴影: ${"%.0f".format(shadowAmt * 100)}"
-            textSize = 15f
-            setPadding(48, 16, 48, 4)
+        // ---- 色调曲线编辑器（直接嵌入弹窗） ----
+        val curveH = (200 * resources.displayMetrics.density).toInt()
+        val curveView = CurveEditorView(this).apply {
+            val savedCurve = ToneCurve.load(prefs)
+            setCurve(savedCurve)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, curveH
+            ).apply { setMargins(24, 8, 24, 8) }
+            onDragStart = {
+                settingsDialog?.window?.let { w ->
+                    w.setDimAmount(0f)
+                    w.decorView.background = null
+                }
+                for (i in 0 until layout.childCount) {
+                    val child = layout.getChildAt(i)
+                    child.alpha = if (child === this@apply) 1f else 0f
+                }
+                settingsDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.alpha = 0f
+            }
+            onDragEnd = {
+                settingsDialog?.window?.let { w ->
+                    w.setDimAmount(0.6f)
+                    w.decorView.background = settingsDialogOriginalBg
+                }
+                for (i in 0 until layout.childCount) layout.getChildAt(i).alpha = 1f
+                settingsDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.alpha = 1f
+            }
+            onCurveChanged = { curve ->
+                ToneCurve.save(prefs, curve)
+                val nativeArr = curve.toNativeArray()
+                glSurfaceView.queueEvent {
+                    pipeline?.setToneCurve(nativeArr)
+                    glSurfaceView.requestRender()
+                }
+            }
         }
-        val sbShadow = SeekBar(this).apply {
-            max = 200
-            progress = ((shadowAmt + 1f) * 100).roundToInt().coerceIn(0, 200)
-            setPadding(48, 0, 48, 16)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    val v = (progress / 100f) - 1f
-                    tvShadow.text = "阴影: ${"%.0f".format(v * 100)}"
-                    glSurfaceView.queueEvent { pipeline?.shadowAmt = v }
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {
-                    val v = (seekBar.progress / 100f) - 1f
-                    glSurfaceView.queueEvent { pipeline?.shadowAmt = v }
-                    showToneMapPreview(tvShadow, seekBar)
-                }
-                override fun onStopTrackingTouch(seekBar: SeekBar) {
-                    val v = (seekBar.progress / 100f) - 1f
-                    prefs.edit().putFloat("shadow_amt", v).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-
-        val tvHighlight = TextView(this).apply {
-            text = "高光: ${"%.0f".format(highlightAmt * 100)}"
-            textSize = 15f
-            setPadding(48, 8, 48, 4)
-        }
-        val sbHighlight = SeekBar(this).apply {
-            max = 200
-            progress = ((highlightAmt + 1f) * 100).roundToInt().coerceIn(0, 200)
-            setPadding(48, 0, 48, 16)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    val v = (progress / 100f) - 1f
-                    tvHighlight.text = "高光: ${"%.0f".format(v * 100)}"
-                    glSurfaceView.queueEvent { pipeline?.highlightAmt = v }
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {
-                    val v = (seekBar.progress / 100f) - 1f
-                    glSurfaceView.queueEvent { pipeline?.highlightAmt = v }
-                    showToneMapPreview(tvHighlight, seekBar)
-                }
-                override fun onStopTrackingTouch(seekBar: SeekBar) {
-                    val v = (seekBar.progress / 100f) - 1f
-                    prefs.edit().putFloat("highlight_amt", v).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-
-        layout.addView(tvShadow)
-        layout.addView(sbShadow)
-        layout.addView(tvHighlight)
-        layout.addView(sbHighlight)
-
-        // ---- 阴影/高光分界点 ----
-        val shMid = prefs.getFloat("shadow_highlight_mid", 0.5f)
-        val tvShMid = TextView(this).apply {
-            text = "分界点: ${"%.2f".format(shMid)}"
-            textSize = 15f
-            setPadding(48, 16, 48, 4)
-        }
-        val sbShMid = SeekBar(this).apply {
-            max = 100
-            progress = ((shMid - 0.1f) * 100).roundToInt().coerceIn(0, 100)
-            setPadding(48, 0, 48, 16)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    val v = 0.1f + progress / 100f
-                    tvShMid.text = "分界点: ${"%.2f".format(v)}"
-                    glSurfaceView.queueEvent { pipeline?.shadowHighlightMid = v }
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {
-                    val v = 0.1f + seekBar.progress / 100f
-                    glSurfaceView.queueEvent { pipeline?.shadowHighlightMid = v }
-                    showToneMapPreview(tvShMid, seekBar)
-                }
-                override fun onStopTrackingTouch(seekBar: SeekBar) {
-                    val v = 0.1f + seekBar.progress / 100f
-                    prefs.edit().putFloat("shadow_highlight_mid", v).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-        layout.addView(tvShMid)
-        layout.addView(sbShMid)
+        layout.addView(curveView)
 
         val btnReset = Button(this).apply {
             text = "恢复默认"
@@ -671,12 +620,12 @@ class MainActivity : AppCompatActivity() {
             setTextColor(0xFFFF6B6B.toInt())
             setBackgroundColor(0x22FF6B6B.toInt())
             setOnClickListener {
-                switchDng.isChecked = true
-                applyDng(true)
-                switchMultiFrame.isChecked = true
-                sbFrameCount.progress = 2
-                tvFrameCount.text = "合成帧数: 4"
-                applyMultiFrame(true, 4)
+                switchDng.isChecked = false
+                applyDng(false)
+                switchMultiFrame.isChecked = false
+                sbFrameCount.visibility = android.view.View.GONE
+                tvFrameCount.visibility = android.view.View.GONE
+                applyMultiFrame(false, 0)
                 sbBlOffset.progress = 32
                 tvBlOffset.text = "黑电平补偿: 0"
                 glSurfaceView.queueEvent { pipeline?.blackLevelOffset = 0f }
@@ -693,18 +642,12 @@ class MainActivity : AppCompatActivity() {
                 tvToneMapE.text = "色调 E（默认0.14）: 0.14"
                 glSurfaceView.queueEvent { pipeline?.toneMapE = 0.14f }
                 prefs.edit().putFloat("tone_map_e", 0.14f).apply()
-                sbShadow.progress = 100
-                tvShadow.text = "阴影: 0"
-                glSurfaceView.queueEvent { pipeline?.shadowAmt = 0f }
-                prefs.edit().putFloat("shadow_amt", 0f).apply()
-                sbHighlight.progress = 100
-                tvHighlight.text = "高光: 0"
-                glSurfaceView.queueEvent { pipeline?.highlightAmt = 0f }
-                prefs.edit().putFloat("highlight_amt", 0f).apply()
-                sbShMid.progress = 40
-                tvShMid.text = "分界点: 0.50"
-                glSurfaceView.queueEvent { pipeline?.shadowHighlightMid = 0.5f }
-                prefs.edit().putFloat("shadow_highlight_mid", 0.5f).apply()
+                // 重置色调曲线为 y=x
+                curveView.resetCurve()
+                val defaultCurve = ToneCurve()
+                ToneCurve.save(prefs, defaultCurve)
+                val nativeArr = defaultCurve.toNativeArray()
+                glSurfaceView.queueEvent { pipeline?.setToneCurve(nativeArr) }
             }
         }
         layout.addView(btnReset)
