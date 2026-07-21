@@ -339,41 +339,6 @@ Java_com_classic_camera_LutEngine_generateLutAndCheckCoverage(
         }
     }
 
-    // 3 次拉普拉斯迭代平滑，磨平 LUT 毛刺防止映射斜率突变放大噪点
-    for (int iter = 0; iter < 3; ++iter) {
-        std::vector<Vec3> tempLut = finalLut;
-
-        for (int z = 0; z < LUT_SIZE; ++z) {
-            for (int y = 0; y < LUT_SIZE; ++y) {
-                for (int x = 0; x < LUT_SIZE; ++x) {
-                    Vec3 sum = {0.0f, 0.0f, 0.0f};
-                    int count = 0;
-
-                    for (int dz = -1; dz <= 1; ++dz) {
-                        for (int dy = -1; dy <= 1; ++dy) {
-                            for (int dx = -1; dx <= 1; ++dx) {
-                                int nx = std::max(0, std::min(LUT_SIZE - 1, x + dx));
-                                int ny = std::max(0, std::min(LUT_SIZE - 1, y + dy));
-                                int nz = std::max(0, std::min(LUT_SIZE - 1, z + dz));
-
-                                int nIdx = nx + ny * LUT_SIZE + nz * LUT_SIZE * LUT_SIZE;
-                                sum.r += tempLut[nIdx].r;
-                                sum.g += tempLut[nIdx].g;
-                                sum.b += tempLut[nIdx].b;
-                                count++;
-                            }
-                        }
-                    }
-
-                    int idx = x + y * LUT_SIZE + z * LUT_SIZE * LUT_SIZE;
-                    finalLut[idx].r = tempLut[idx].r * 0.6f + (sum.r / count) * 0.4f;
-                    finalLut[idx].g = tempLut[idx].g * 0.6f + (sum.g / count) * 0.4f;
-                    finalLut[idx].b = tempLut[idx].b * 0.6f + (sum.b / count) * 0.4f;
-                }
-            }
-        }
-    }
-
     std::vector<jfloat> lutOut(outLen);
     for (int i = 0; i < TOTAL_NODES; ++i) {
         lutOut[i * 3]     = finalLut[i].r;
@@ -389,6 +354,287 @@ Java_com_classic_camera_LutEngine_generateLutAndCheckCoverage(
         covOut[i] = covered[i] ? JNI_TRUE : JNI_FALSE;
     }
     env->ReleaseBooleanArrayElements(out_covered_array, covOut, 0);
+
+    return (jfloat)coveredCount / (jfloat)TOTAL_NODES;
+}
+
+// ── 融合模式：标准拟合覆盖的体素用标准结果，空洞用多项式结果补齐 ──
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_classic_camera_LutEngine_generateMergedLut(
+    JNIEnv* env, jobject thiz,
+    jintArray orig_pixels, jintArray filt_pixels,
+    jint num_pixels, jfloatArray out_lut_array,
+    jbooleanArray out_covered_array,
+    jfloatArray out_stats) {
+
+    jint* orig = env->GetIntArrayElements(orig_pixels, nullptr);
+    jint* filt = env->GetIntArrayElements(filt_pixels, nullptr);
+
+    // ── 1. 标准拟合：散点三线性插值 ──
+    std::vector<Vec3> colorSum(TOTAL_NODES, {0, 0, 0});
+    std::vector<float> weightSum(TOTAL_NODES, 0.0f);
+    std::vector<bool> covered(TOTAL_NODES, false);
+
+    // ── 2. 多项式拟合：累加正规方程（只用训练集 80%） ──
+    double ATA[POLY_TERMS * POLY_TERMS] = {0};
+    double ATb_R[POLY_TERMS] = {0};
+    double ATb_G[POLY_TERMS] = {0};
+    double ATb_B[POLY_TERMS] = {0};
+    int trainCount = 0;
+
+    for (int i = 0; i < num_pixels; ++i) {
+        int oR = (orig[i] >> 16) & 0xFF;
+        int oG = (orig[i] >> 8) & 0xFF;
+        int oB = orig[i] & 0xFF;
+        int fR = (filt[i] >> 16) & 0xFF;
+        int fG = (filt[i] >> 8) & 0xFF;
+        int fB = filt[i] & 0xFF;
+
+        // 标准拟合：记录体素命中
+        int vx = std::min(LUT_SIZE - 1, oR * LUT_SIZE / 256);
+        int vy = std::min(LUT_SIZE - 1, oG * LUT_SIZE / 256);
+        int vz = std::min(LUT_SIZE - 1, oB * LUT_SIZE / 256);
+        covered[vx + vy * LUT_SIZE + vz * LUT_SIZE * LUT_SIZE] = true;
+
+        // 标准拟合：三线性插值分配
+        float fx = oR / 255.0f * (LUT_SIZE - 1);
+        float fy = oG / 255.0f * (LUT_SIZE - 1);
+        float fz = oB / 255.0f * (LUT_SIZE - 1);
+        int x0 = (int)floor(fx), y0 = (int)floor(fy), z0 = (int)floor(fz);
+        int x1 = std::min(x0 + 1, LUT_SIZE - 1);
+        int y1 = std::min(y0 + 1, LUT_SIZE - 1);
+        int z1 = std::min(z0 + 1, LUT_SIZE - 1);
+        float dx = fx - x0, dy = fy - y0, dz = fz - z0;
+        float weights[8] = {
+            (1-dx)*(1-dy)*(1-dz), dx*(1-dy)*(1-dz),
+            (1-dx)*dy*(1-dz),     dx*dy*(1-dz),
+            (1-dx)*(1-dy)*dz,     dx*(1-dy)*dz,
+            (1-dx)*dy*dz,         dx*dy*dz
+        };
+        int indices[8] = {
+            x0 + y0*LUT_SIZE + z0*LUT_SIZE*LUT_SIZE,
+            x1 + y0*LUT_SIZE + z0*LUT_SIZE*LUT_SIZE,
+            x0 + y1*LUT_SIZE + z0*LUT_SIZE*LUT_SIZE,
+            x1 + y1*LUT_SIZE + z0*LUT_SIZE*LUT_SIZE,
+            x0 + y0*LUT_SIZE + z1*LUT_SIZE*LUT_SIZE,
+            x1 + y0*LUT_SIZE + z1*LUT_SIZE*LUT_SIZE,
+            x0 + y1*LUT_SIZE + z1*LUT_SIZE*LUT_SIZE,
+            x1 + y1*LUT_SIZE + z1*LUT_SIZE*LUT_SIZE
+        };
+        float fRf = fR / 255.0f, fGf = fG / 255.0f, fBf = fB / 255.0f;
+        for (int j = 0; j < 8; ++j) {
+            int idx = indices[j];
+            float w = weights[j];
+            colorSum[idx].r += w * fRf;
+            colorSum[idx].g += w * fGf;
+            colorSum[idx].b += w * fBf;
+            weightSum[idx] += w;
+        }
+
+        // 多项式拟合：累加正规方程（80% 训练集）
+        if (i % 5 == 0) continue;
+        trainCount++;
+        double dr = oR / 255.0, dg = oG / 255.0, db = oB / 255.0;
+        float fb[POLY_TERMS];
+        polyBasis((float)dr, (float)dg, (float)db, fb);
+        double f[POLY_TERMS];
+        for (int t = 0; t < POLY_TERMS; ++t) f[t] = fb[t];
+
+        double filtR = fR / 255.0, filtG = fG / 255.0, filtB = fB / 255.0;
+        for (int j = 0; j < POLY_TERMS; ++j)
+            for (int k = j; k < POLY_TERMS; ++k)
+                ATA[j * POLY_TERMS + k] += f[j] * f[k];
+
+        double dR = filtR - dr, dG = filtG - dg, dB = filtB - db;
+        for (int j = 0; j < POLY_TERMS; ++j) {
+            ATb_R[j] += f[j] * dR;
+            ATb_G[j] += f[j] * dG;
+            ATb_B[j] += f[j] * dB;
+        }
+    }
+
+    // ── 3. 解多项式系数 ──
+    for (int j = 0; j < POLY_TERMS; ++j)
+        for (int k = 0; k < j; ++k)
+            ATA[j * POLY_TERMS + k] = ATA[k * POLY_TERMS + j];
+
+    float ATAf[POLY_TERMS * POLY_TERMS];
+    float ATb_Rf[POLY_TERMS], ATb_Gf[POLY_TERMS], ATb_Bf[POLY_TERMS];
+    for (int i = 0; i < POLY_TERMS * POLY_TERMS; ++i) ATAf[i] = (float)ATA[i];
+    for (int i = 0; i < POLY_TERMS; ++i) {
+        ATb_Rf[i] = (float)ATb_R[i];
+        ATb_Gf[i] = (float)ATb_G[i];
+        ATb_Bf[i] = (float)ATb_B[i];
+    }
+
+    float coeffsR[POLY_TERMS], coeffsG[POLY_TERMS], coeffsB[POLY_TERMS];
+    float ATA_R[POLY_TERMS * POLY_TERMS], ATA_G[POLY_TERMS * POLY_TERMS], ATA_B[POLY_TERMS * POLY_TERMS];
+
+    auto copySolve = [&](float* coeffs, float* ATb, float* ATA_copy) {
+        memcpy(ATA_copy, ATAf, sizeof(float) * POLY_TERMS * POLY_TERMS);
+        memcpy(coeffs, ATb, sizeof(float) * POLY_TERMS);
+        gaussSolve(POLY_TERMS, ATA_copy, coeffs);
+    };
+    copySolve(coeffsR, ATb_Rf, ATA_R);
+    copySolve(coeffsG, ATb_Gf, ATA_G);
+    copySolve(coeffsB, ATb_Bf, ATA_B);
+
+    // ── 4. 交叉验证：遍历所有像素评估多项式误差 ──
+    float trainSum = 0, trainMax = 0, trainCountF = 0;
+    float validSum = 0, validMax = 0, validCountF = 0;
+    int worstR = 0, worstG = 0, worstB = 0;
+
+    for (int i = 0; i < num_pixels; ++i) {
+        float r = ((orig[i] >> 16) & 0xFF) / 255.0f;
+        float g = ((orig[i] >> 8) & 0xFF) / 255.0f;
+        float b = (orig[i]       & 0xFF) / 255.0f;
+
+        float f[POLY_TERMS];
+        polyBasis(r, g, b, f);
+
+        float predR = 0, predG = 0, predB = 0;
+        for (int t = 0; t < POLY_TERMS; ++t) {
+            predR += coeffsR[t] * f[t];
+            predG += coeffsG[t] * f[t];
+            predB += coeffsB[t] * f[t];
+        }
+        predR = fmaxf(0.0f, fminf(1.0f, r + predR));
+        predG = fmaxf(0.0f, fminf(1.0f, g + predG));
+        predB = fmaxf(0.0f, fminf(1.0f, b + predB));
+
+        float fR = ((filt[i] >> 16) & 0xFF) / 255.0f;
+        float fG = ((filt[i] >> 8)  & 0xFF) / 255.0f;
+        float fB = (filt[i]        & 0xFF) / 255.0f;
+
+        float errR = fabsf(predR - fR);
+        float errG = fabsf(predG - fG);
+        float errB = fabsf(predB - fB);
+        float pixelErr = fmaxf(errR, fmaxf(errG, errB));
+
+        if (i % 5 == 0) {  // 验证集
+            validSum += pixelErr;
+            if (pixelErr > validMax) {
+                validMax = pixelErr;
+                worstR = (orig[i] >> 16) & 0xFF; worstG = (orig[i] >> 8) & 0xFF; worstB = orig[i] & 0xFF;
+            }
+            validCountF += 1.0f;
+        } else {           // 训练集
+            trainSum += pixelErr;
+            if (pixelErr > trainMax) trainMax = pixelErr;
+            trainCountF += 1.0f;
+        }
+    }
+
+    float trainAvg = trainSum / trainCountF;
+    float validAvg = validSum / validCountF;
+
+    env->ReleaseIntArrayElements(orig_pixels, orig, 0);
+    env->ReleaseIntArrayElements(filt_pixels, filt, 0);
+
+    // ── 5. 计算标准拟合 LUT 和多项式 LUT，然后融合 ──
+    int coveredCount = 0;
+    jsize outLen = env->GetArrayLength(out_lut_array);
+    std::vector<jfloat> lutOut(outLen);
+
+    for (int i = 0; i < TOTAL_NODES; ++i) {
+        if (covered[i]) coveredCount++;
+
+        int z = i / (LUT_SIZE * LUT_SIZE);
+        int y = (i % (LUT_SIZE * LUT_SIZE)) / LUT_SIZE;
+        int x = i % LUT_SIZE;
+        float nx = x / (float)(LUT_SIZE - 1);
+        float ny = y / (float)(LUT_SIZE - 1);
+        float nz = z / (float)(LUT_SIZE - 1);
+
+        // 标准拟合结果
+        Vec3 identity = {nx, ny, nz};
+        Vec3 standard = identity;
+        float confidence = 0.0f;
+        if (weightSum[i] > 0.001f) {
+            confidence = std::min(1.0f, weightSum[i] / 5.0f);
+            Vec3 sampled = {colorSum[i].r / weightSum[i],
+                            colorSum[i].g / weightSum[i],
+                            colorSum[i].b / weightSum[i]};
+            standard.r = confidence * sampled.r + (1 - confidence) * identity.r;
+            standard.g = confidence * sampled.g + (1 - confidence) * identity.g;
+            standard.b = confidence * sampled.b + (1 - confidence) * identity.b;
+        }
+
+        // 多项式拟合结果
+        float terms[POLY_TERMS];
+        polyBasis(nx, ny, nz, terms);
+        float dr = 0, dg = 0, db = 0;
+        for (int t = 0; t < POLY_TERMS; ++t) {
+            dr += coeffsR[t] * terms[t];
+            dg += coeffsG[t] * terms[t];
+            db += coeffsB[t] * terms[t];
+        }
+        Vec3 poly = {
+            fmaxf(0.0f, fminf(1.0f, nx + dr)),
+            fmaxf(0.0f, fminf(1.0f, ny + dg)),
+            fmaxf(0.0f, fminf(1.0f, nz + db))
+        };
+
+        // 融合：覆盖体素用标准拟合（保持原始映射），未覆盖体素用多项式
+        int idx = i * 3;
+        if (covered[i] && weightSum[i] > 0.001f) {
+            lutOut[idx]     = standard.r;
+            lutOut[idx + 1] = standard.g;
+            lutOut[idx + 2] = standard.b;
+        } else {
+            lutOut[idx]     = poly.r;
+            lutOut[idx + 1] = poly.g;
+            lutOut[idx + 2] = poly.b;
+        }
+    }
+
+    // 边界平滑：对未覆盖体素做邻域扩散，使其与邻近覆盖体素连续过渡
+    for (int iter = 0; iter < 2; ++iter) {
+        std::vector<jfloat> tmp = lutOut;
+        for (int z = 0; z < LUT_SIZE; ++z) {
+            for (int y = 0; y < LUT_SIZE; ++y) {
+                for (int x = 0; x < LUT_SIZE; ++x) {
+                    int fi = x + y * LUT_SIZE + z * LUT_SIZE * LUT_SIZE;
+                    if (covered[fi] && weightSum[fi] > 0.001f) continue;
+                    float sR = 0, sG = 0, sB = 0;
+                    int n = 0;
+                    for (int dz = -1; dz <= 1; ++dz) {
+                        for (int dy = -1; dy <= 1; ++dy) {
+                            for (int dx = -1; dx <= 1; ++dx) {
+                                if (dx == 0 && dy == 0 && dz == 0) continue;
+                                int nx = std::max(0, std::min(LUT_SIZE - 1, x + dx));
+                                int ny = std::max(0, std::min(LUT_SIZE - 1, y + dy));
+                                int nz = std::max(0, std::min(LUT_SIZE - 1, z + dz));
+                                int ni = nx + ny * LUT_SIZE + nz * LUT_SIZE * LUT_SIZE;
+                                sR += tmp[ni * 3];
+                                sG += tmp[ni * 3 + 1];
+                                sB += tmp[ni * 3 + 2];
+                                n++;
+                            }
+                        }
+                    }
+                    lutOut[fi * 3]     = tmp[fi * 3] * 0.6f + (sR / n) * 0.4f;
+                    lutOut[fi * 3 + 1] = tmp[fi * 3 + 1] * 0.6f + (sG / n) * 0.4f;
+                    lutOut[fi * 3 + 2] = tmp[fi * 3 + 2] * 0.6f + (sB / n) * 0.4f;
+                }
+            }
+        }
+    }
+
+    env->SetFloatArrayRegion(out_lut_array, 0, (jsize)outLen, lutOut.data());
+
+    // 写回 coverage 布尔数组（供可视化）
+    jboolean* covOut = env->GetBooleanArrayElements(out_covered_array, nullptr);
+    for (int i = 0; i < TOTAL_NODES; ++i) {
+        covOut[i] = covered[i] ? JNI_TRUE : JNI_FALSE;
+    }
+    env->ReleaseBooleanArrayElements(out_covered_array, covOut, 0);
+
+    // 统计：[训练平均, 验证平均, 训练最大, 验证最大, 最差输入R, G, B, 覆盖率]
+    jfloat stats[8] = {trainAvg, validAvg, trainMax, validMax,
+                       (float)worstR, (float)worstG, (float)worstB,
+                       (jfloat)coveredCount / (jfloat)TOTAL_NODES};
+    env->SetFloatArrayRegion(out_stats, 0, 8, stats);
 
     return (jfloat)coveredCount / (jfloat)TOTAL_NODES;
 }
