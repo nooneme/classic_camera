@@ -33,6 +33,8 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -88,12 +90,25 @@ class MainActivity : AppCompatActivity() {
     private val settingsLayoutChildren = mutableListOf<android.view.View>()
 
     private var currentFilterPath: String = ""
+        set(value) {
+            field = value
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putString("current_filter_path", value).apply()
+        }
+
+    // ---- LUT 选择器 ----
+    private lateinit var lutAdapter: LutSelectorAdapter
+    private lateinit var lutRecyclerView: RecyclerView
 
     /** 滤镜选择结果接收器 */
     private val filterLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode != RESULT_OK) return@registerForActivityResult
+        if (result.resultCode != RESULT_OK) {
+            loadLutList()
+            return@registerForActivityResult
+        }
         val path = result.data?.getStringExtra("filter_path") ?: ""
         currentFilterPath = path
+        lutAdapter.selectedPath = path
         tvStatusFilter.text = if (path.isNotEmpty()) "滤镜: ${java.io.File(path).nameWithoutExtension}" else "滤镜: 无"
         // 先在主线程加载 .cube 文件（避免 GL 线程做 I/O）
         val lut = if (path.isNotEmpty()) LutUtils.loadCubeFile(java.io.File(path)) else null
@@ -163,6 +178,56 @@ class MainActivity : AppCompatActivity() {
         val savedCurve = ToneCurve.load(prefs)
         val toneCurveNativeArray = savedCurve.toNativeArray()
         pipeline?.toneCurvePoints = toneCurveNativeArray
+
+        // 恢复上次选择的滤镜
+        currentFilterPath = prefs.getString("current_filter_path", "") ?: ""
+        if (currentFilterPath.isNotEmpty()) {
+            val savedLut = LutUtils.loadCubeFile(java.io.File(currentFilterPath))
+            if (savedLut != null) {
+                pipeline?.lutFloatArray = savedLut
+            } else {
+                currentFilterPath = ""
+            }
+        }
+        tvStatusFilter?.text = if (currentFilterPath.isNotEmpty())
+            "滤镜: ${java.io.File(currentFilterPath).nameWithoutExtension}" else "滤镜: 无"
+
+        // ---- LUT 选择器初始化 ----
+        lutRecyclerView = findViewById(R.id.lutRecyclerView)
+        lutRecyclerView.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+        lutAdapter = LutSelectorAdapter(
+            onItemClick = { entry ->
+                val path = entry.file?.absolutePath ?: ""
+                currentFilterPath = path
+                tvStatusFilter.text = if (path.isNotEmpty())
+                    "滤镜: ${java.io.File(path).nameWithoutExtension}" else "滤镜: 无"
+                val lut = entry.lutData
+                glSurfaceView.queueEvent {
+                    pipeline?.setLut(lut)
+                    glSurfaceView.requestRender()
+                }
+            },
+            onPhase1Complete = {
+                val idx = lutAdapter.currentSelectedIndex()
+                if (idx >= 0) lutRecyclerView.post {
+                    val lm = lutRecyclerView.layoutManager as LinearLayoutManager
+                    val halfW = lutRecyclerView.width / 2
+                    val itemHalfW = (26 * resources.displayMetrics.density + 0.5f).toInt()
+                    lm.scrollToPositionWithOffset(idx, (halfW - itemHalfW).coerceAtLeast(0))
+                }
+            }
+        )
+        lutAdapter.selectedPath = currentFilterPath
+        lutRecyclerView.adapter = lutAdapter
+
+        findViewById<android.widget.ImageView>(R.id.btnManageFilters).setOnClickListener {
+            val intent = Intent(this, FilterActivity::class.java).apply {
+                putExtra("current_filter", currentFilterPath)
+            }
+            filterLauncher.launch(intent)
+        }
+
+        loadLutList()
 
         glSurfaceView.setRenderer(pipeline)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
@@ -691,6 +756,13 @@ class MainActivity : AppCompatActivity() {
         toneMapKeepLabel = null
     }
 
+    // ================= LUT 列表加载 =================
+
+    private fun loadLutList() {
+        val dir = getExternalFilesDir("filters") ?: filesDir
+        lutAdapter.loadFromDirectory(dir)
+    }
+
     companion object {
         private const val HEAVY = 1           // 边界大震 50ms
         private const val TICK = 2             // 调节小震 6ms
@@ -716,13 +788,19 @@ class MainActivity : AppCompatActivity() {
     private fun enterCameraUI(lenses: List<LensInfo>) {
         lensList = lenses.sortedWith(compareBy({ it.lensFacing == CameraMetadata.LENS_FACING_FRONT }, { it.focalLength }))
         lensButtonBar.removeAllViews()
+        val btnHeight = resources.displayMetrics.density.let { (44 * it + 0.5f).toInt() }
+        val btnMargins = resources.displayMetrics.density.let { (4 * it + 0.5f).toInt() }
         for (lens in lensList) {
             val btn = Button(this).apply {
                 text = if (lens.lensFacing == CameraMetadata.LENS_FACING_FRONT) "自拍"
                        else formatFocalLength(lens.focalLength, lens)
                 isAllCaps = false
+                minimumHeight = 0
                 setTag(lens)
                 setOnClickListener { selectLens(lens) }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, btnHeight
+                ).apply { setMargins(btnMargins, 0, btnMargins, 0) }
             }
             lensButtonBar.addView(btn)
         }
@@ -1123,6 +1201,7 @@ class MainActivity : AppCompatActivity() {
         if (selectedLens != null) {
             ensurePermission { openSelectedLensPreview() }
         }
+        loadLutList()
     }
 
     override fun onDestroy() {

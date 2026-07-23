@@ -2,6 +2,7 @@ package com.classic.camera
 
 import android.graphics.Bitmap
 import android.opengl.GLES30
+import android.opengl.GLES31
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
 import java.nio.ByteBuffer
@@ -14,9 +15,12 @@ class RawPipeline : GLSurfaceView.Renderer {
 
     companion object {
         private const val GL_R16 = 0x822A
+        private const val GL_R16UI = 0x8234
         private const val GL_RGBA16F = 0x881A
         private const val GL_HALF_FLOAT = 0x140B
         private const val GL_R8 = 0x8229
+        private const val RCD_WG = 16
+        private const val SHADER_STORAGE_BARRIER = 0x00000002
     }
 
 
@@ -120,6 +124,56 @@ class RawPipeline : GLSurfaceView.Renderer {
     private var lscTexId = 0
     private var lastGainMapRef: FloatArray? = null
 
+    // ---- RCD 计算管线 ----
+    private var rcdInitialized = false
+    private var rcdEnabled = false
+    private var rcdPopulateProg = 0
+    private var rcdStep1Prog = 0
+    private var rcdStep2Prog = 0
+    private var rcdStep3Prog = 0
+    private var rcdStep40Prog = 0
+    private var rcdStep41Prog = 0
+    private var rcdStep42Prog = 0
+    private var rcdStep43Prog = 0
+    private var rcdWriteProg = 0
+    private val rcdSsbo = IntArray(9)
+    private var rcdRawTexId = 0
+    private var rcdOutTexId = 0
+    private var rcdBufW = 0
+    private var rcdBufH = 0
+
+    // ---- RCD 后处理 Fragment Shader ----
+    private var progRcd = 0
+    private lateinit var uniRcd: RcdUniforms
+    private class RcdUniforms(val id: Int) {
+        var aPos = 0; var aTexCoord = 0
+        var uInputTex = 0
+        var uCCM = 0
+        var uAspectScale = 0; var uOrientation = 0; var uMirror = 0
+        var uToneMapD = 0; var uToneMapE = 0
+        var uToneCurveLUT = 0
+        var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0
+        var uLscGainTex = 0; var uLscGridSize = 0; var uEnableLsc = 0
+        fun lookup() {
+            aPos = GLES30.glGetAttribLocation(id, "aPos")
+            aTexCoord = GLES30.glGetAttribLocation(id, "aTexCoord")
+            uInputTex = GLES30.glGetUniformLocation(id, "uInputTex")
+            uCCM = GLES30.glGetUniformLocation(id, "uCCM")
+            uAspectScale = GLES30.glGetUniformLocation(id, "uAspectScale")
+            uOrientation = GLES30.glGetUniformLocation(id, "uOrientation")
+            uMirror = GLES30.glGetUniformLocation(id, "uMirror")
+            uToneMapD = GLES30.glGetUniformLocation(id, "uToneMapD")
+            uToneMapE = GLES30.glGetUniformLocation(id, "uToneMapE")
+            uToneCurveLUT = GLES30.glGetUniformLocation(id, "uToneCurveLUT")
+            uLutTex = GLES30.glGetUniformLocation(id, "uLutTexture")
+            uLutSizeLoc = GLES30.glGetUniformLocation(id, "uLutSize")
+            uEnableLut = GLES30.glGetUniformLocation(id, "uEnableLut")
+            uLscGainTex = GLES30.glGetUniformLocation(id, "uLscGainTex")
+            uLscGridSize = GLES30.glGetUniformLocation(id, "uLscGridSize")
+            uEnableLsc = GLES30.glGetUniformLocation(id, "uEnableLsc")
+        }
+    }
+
     // ---- GL 初始化回调（GPU 多帧融合等需 context 就绪后初始化） ----
     var onGluReady: (() -> Unit)? = null
 
@@ -148,6 +202,8 @@ class RawPipeline : GLSurfaceView.Renderer {
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         captureFbo = 0; captureTex = 0; captureTexW = 0; captureTexH = 0
         texAllocated = false; texW = 0; texH = 0
+        rcdInitialized = false; rcdEnabled = false
+        rcdSsbo.fill(0); rcdBufW = 0; rcdBufH = 0
 
         progBilinear = createProgram(VS, buildBayerShader(BILINEAR_BODY))
         uniBilinear = ProgUniforms(progBilinear).also { it.lookupBayer() }
@@ -201,6 +257,13 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
         uploadIdentityToneCurve()
+
+        // RCD 计算管线初始化
+        initRcd()
+
+        // RCD 后处理 Fragment Shader
+        progRcd = createProgram(VS, RCD_FRAGMENT_SHADER)
+        uniRcd = RcdUniforms(progRcd).also { it.lookup() }
 
         // GPU 多帧管线初始化（context 已就绪）
         onGluReady?.invoke()
@@ -267,6 +330,266 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform2f(u.uAspectScale, aspectX, aspectY)
     }
 
+    // ====================== RCD 计算管线 ======================
+
+    private fun initRcd() {
+        if (rcdInitialized) return
+        try {
+            rcdPopulateProg = compileCompute(RcdShaders.POPULATE)
+            rcdStep1Prog = compileCompute(RcdShaders.STEP_1)
+            rcdStep2Prog = compileCompute(RcdShaders.STEP_2)
+            rcdStep3Prog = compileCompute(RcdShaders.STEP_3)
+            rcdStep40Prog = compileCompute(RcdShaders.STEP_4_0)
+            rcdStep41Prog = compileCompute(RcdShaders.STEP_4_1)
+            rcdStep42Prog = compileCompute(RcdShaders.STEP_4_2)
+            rcdStep43Prog = compileCompute(RcdShaders.STEP_4_3)
+            rcdWriteProg = compileCompute(RcdShaders.WRITE_OUTPUT)
+
+            GLES31.glGenBuffers(9, rcdSsbo, 0)
+
+            // RCD RAW 输入纹理 (R16UI)
+            val rcdTexs = IntArray(1)
+            GLES31.glGenTextures(1, rcdTexs, 0)
+            rcdRawTexId = rcdTexs[0]
+
+            // RCD 输出纹理 (RGBA16F)
+            val outTexs = IntArray(1)
+            GLES31.glGenTextures(1, outTexs, 0)
+            rcdOutTexId = outTexs[0]
+
+            rcdEnabled = true
+        } catch (e: Exception) {
+            android.util.Log.w("ClassicCamera", "RCD init failed, falling back to MHC", e)
+            rcdEnabled = false
+        }
+        rcdInitialized = true
+    }
+
+    private fun ensureRcdBuffers(w: Int, h: Int) {
+        if (w <= 0 || h <= 0) return
+        if (rcdSsbo[0] == 0) GLES31.glGenBuffers(9, rcdSsbo, 0)
+        val fullBytes = w * h * 4
+        val halfBytes = w * h * 2
+        val sizes = intArrayOf(fullBytes, fullBytes, fullBytes, fullBytes, fullBytes, halfBytes, halfBytes, halfBytes, halfBytes)
+        for (i in 0..8) {
+            GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, rcdSsbo[i])
+            GLES31.glBufferData(GLES31.GL_SHADER_STORAGE_BUFFER, sizes[i], null, GLES31.GL_DYNAMIC_DRAW)
+        }
+        if (rcdBufW != w || rcdBufH != h) {
+            if (rcdRawTexId != 0) { GLES31.glDeleteTextures(1, intArrayOf(rcdRawTexId), 0) }
+            if (rcdOutTexId != 0) { GLES31.glDeleteTextures(1, intArrayOf(rcdOutTexId), 0) }
+            val rawTex = IntArray(1); GLES31.glGenTextures(1, rawTex, 0); rcdRawTexId = rawTex[0]
+            val outTex = IntArray(1); GLES31.glGenTextures(1, outTex, 0); rcdOutTexId = outTex[0]
+            GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rcdRawTexId)
+            GLES31.glTexStorage2D(GLES31.GL_TEXTURE_2D, 1, GL_R16UI, w, h)
+            GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_MIN_FILTER, GLES31.GL_NEAREST)
+            GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_MAG_FILTER, GLES31.GL_NEAREST)
+            GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_WRAP_S, GLES31.GL_CLAMP_TO_EDGE)
+            GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_WRAP_T, GLES31.GL_CLAMP_TO_EDGE)
+            GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rcdOutTexId)
+            GLES31.glTexStorage2D(GLES31.GL_TEXTURE_2D, 1, GL_RGBA16F, w, h)
+            GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_MIN_FILTER, GLES31.GL_LINEAR)
+            GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_MAG_FILTER, GLES31.GL_LINEAR)
+            GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_WRAP_S, GLES31.GL_CLAMP_TO_EDGE)
+            GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_WRAP_T, GLES31.GL_CLAMP_TO_EDGE)
+            rcdBufW = w; rcdBufH = h
+        }
+    }
+
+    private fun uploadRcdRaw(buf: java.nio.Buffer, w: Int, h: Int) {
+        if (rcdRawTexId == 0) return
+        buf.position(0)
+        val shortCount = buf.remaining() / 2
+        if (shortCount < w * h) return
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rcdRawTexId)
+        GLES31.glTexSubImage2D(GLES31.GL_TEXTURE_2D, 0, 0, 0, w, h, GLES31.GL_RED_INTEGER, GLES31.GL_UNSIGNED_SHORT, buf)
+    }
+
+    private fun uploadRcdRawShort(data: ShortArray, w: Int, h: Int) {
+        if (rcdRawTexId == 0 || data.size < w * h) return
+        val bb = ByteBuffer.allocateDirect(w * h * 2).order(ByteOrder.nativeOrder())
+        bb.asShortBuffer().put(data)
+        bb.position(0)
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rcdRawTexId)
+        GLES31.glTexSubImage2D(GLES31.GL_TEXTURE_2D, 0, 0, 0, w, h, GLES31.GL_RED_INTEGER, GLES31.GL_UNSIGNED_SHORT, bb)
+    }
+
+    private fun drawRcdToFbo() {
+        if (rcdOutTexId == 0 || captureFbo == 0) return
+        GLES31.glBindFramebuffer(GLES31.GL_FRAMEBUFFER, captureFbo)
+        GLES31.glViewport(0, 0, captureTexW, captureTexH)
+        GLES31.glClearColor(0f, 0f, 0f, 1f)
+        GLES31.glClear(GLES31.GL_COLOR_BUFFER_BIT)
+        GLES31.glUseProgram(progRcd)
+        GLES31.glUniform2f(uniRcd.uAspectScale, 1f, 1f)
+        GLES31.glUniform1i(uniRcd.uOrientation, orientation)
+        GLES31.glUniform1i(uniRcd.uMirror, if (mirror) 1 else 0)
+        GLES31.glActiveTexture(GLES31.GL_TEXTURE0)
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rcdOutTexId)
+        GLES31.glUniform1i(uniRcd.uInputTex, 0)
+        GLES31.glUniformMatrix3fv(uniRcd.uCCM, 1, false, ccm, 0)
+        GLES31.glUniform1f(uniRcd.uToneMapD, toneMapD)
+        GLES31.glUniform1f(uniRcd.uToneMapE, toneMapE)
+        GLES31.glActiveTexture(GLES31.GL_TEXTURE3)
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, toneCurveTexId)
+        GLES31.glUniform1i(uniRcd.uToneCurveLUT, 3)
+        GLES31.glActiveTexture(GLES31.GL_TEXTURE1)
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_3D, lutTextureId)
+        GLES31.glUniform1i(uniRcd.uLutTex, 1)
+        GLES31.glUniform1f(uniRcd.uLutSizeLoc, 33.0f)
+        GLES31.glUniform1i(uniRcd.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
+        GLES31.glActiveTexture(GLES31.GL_TEXTURE2)
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, lscTexId)
+        GLES31.glUniform1i(uniRcd.uLscGainTex, 2)
+        GLES31.glUniform2f(uniRcd.uLscGridSize, lscGridCols.toFloat(), lscGridRows.toFloat())
+        GLES31.glUniform1i(uniRcd.uEnableLsc, if (lscGainMap != null) 1 else 0)
+        drawQuadRaw(uniRcd.aPos, uniRcd.aTexCoord)
+    }
+
+    private fun dispatchRcd(w: Int, h: Int, cfa: Int, black: FloatArray, white: Float, wbGains: FloatArray) {
+        if (!rcdEnabled) return
+        ensureRcdBuffers(w, h)
+
+        val gx = (w + RCD_WG - 1) / RCD_WG
+        val gy = (h + RCD_WG - 1) / RCD_WG
+        val gx2 = ((w / 2) + RCD_WG - 1) / RCD_WG
+
+        val black4 = if (black.size >= 4) floatArrayOf(black[0], black[1], black[2], black[3])
+            else floatArrayOf(black[0], black[0], black[0], black[0])
+        val wb4 = if (wbGains.size >= 4) floatArrayOf(wbGains[0], wbGains[1], wbGains[2], wbGains[3])
+            else floatArrayOf(wbGains[0], 1f, 1f, wbGains[0])
+
+        // POPULATE
+        GLES31.glUseProgram(rcdPopulateProg)
+        GLES31.glActiveTexture(GLES31.GL_TEXTURE0)
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rcdRawTexId)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdPopulateProg, "uRawTexture"), 0)
+        for (i in 0..3) GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, rcdSsbo[i])
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdPopulateProg, "uImageSize"), w, h)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdPopulateProg, "uCfaPattern"), cfa)
+        GLES31.glUniform4f(GLES31.glGetUniformLocation(rcdPopulateProg, "uBlackLevel"), black4[0], black4[1], black4[2], black4[3])
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(rcdPopulateProg, "uWhiteLevel"), white)
+        GLES31.glUniform4f(GLES31.glGetUniformLocation(rcdPopulateProg, "uWhiteBalanceGains"), wb4[0], wb4[1], wb4[2], wb4[3])
+        GLES31.glDispatchCompute(gx, gy, 1)
+        GLES31.glMemoryBarrier(SHADER_STORAGE_BARRIER)
+
+        // STEP 1
+        GLES31.glUseProgram(rcdStep1Prog)
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 0, rcdSsbo[0])
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 4, rcdSsbo[4])
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep1Prog, "uImageSize"), w, h)
+        GLES31.glDispatchCompute(gx, gy, 1)
+        GLES31.glMemoryBarrier(SHADER_STORAGE_BARRIER)
+
+        // STEP 2
+        GLES31.glUseProgram(rcdStep2Prog)
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 0, rcdSsbo[0])
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 5, rcdSsbo[5])
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep2Prog, "uImageSize"), w, h)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep2Prog, "uCfaPattern"), cfa)
+        GLES31.glDispatchCompute(gx2, gy, 1)
+        GLES31.glMemoryBarrier(SHADER_STORAGE_BARRIER)
+
+        // STEP 3
+        GLES31.glUseProgram(rcdStep3Prog)
+        for (i in intArrayOf(0, 2, 4, 5)) GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, rcdSsbo[i])
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep3Prog, "uImageSize"), w, h)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep3Prog, "uCfaPattern"), cfa)
+        GLES31.glDispatchCompute(gx2, gy, 1)
+        GLES31.glMemoryBarrier(SHADER_STORAGE_BARRIER)
+
+        // STEP 4_0
+        GLES31.glUseProgram(rcdStep40Prog)
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 0, rcdSsbo[0])
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 6, rcdSsbo[6])
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 7, rcdSsbo[7])
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep40Prog, "uImageSize"), w, h)
+        GLES31.glDispatchCompute(gx2, gy, 1)
+        GLES31.glMemoryBarrier(SHADER_STORAGE_BARRIER)
+
+        // STEP 4_1
+        GLES31.glUseProgram(rcdStep41Prog)
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 6, rcdSsbo[6])
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 7, rcdSsbo[7])
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 5, rcdSsbo[5])
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep41Prog, "uImageSize"), w, h)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep41Prog, "uCfaPattern"), cfa)
+        GLES31.glDispatchCompute(gx2, gy, 1)
+        GLES31.glMemoryBarrier(SHADER_STORAGE_BARRIER)
+
+        // STEP 4_2
+        GLES31.glUseProgram(rcdStep42Prog)
+        for (i in 0..3) GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, rcdSsbo[i])
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 4, rcdSsbo[5])
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep42Prog, "uImageSize"), w, h)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep42Prog, "uCfaPattern"), cfa)
+        GLES31.glDispatchCompute(gx2, gy, 1)
+        GLES31.glMemoryBarrier(SHADER_STORAGE_BARRIER)
+
+        // STEP 4_3
+        GLES31.glUseProgram(rcdStep43Prog)
+        for (i in 0..3) GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, rcdSsbo[i])
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 4, rcdSsbo[4])
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdStep43Prog, "uImageSize"), w, h)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdStep43Prog, "uCfaPattern"), cfa)
+        GLES31.glDispatchCompute(gx2, gy, 1)
+        GLES31.glMemoryBarrier(SHADER_STORAGE_BARRIER)
+
+        // WRITE_OUTPUT
+        GLES31.glUseProgram(rcdWriteProg)
+        for (i in 0..3) GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, i, rcdSsbo[i])
+        GLES31.glBindImageTexture(0, rcdOutTexId, 0, false, 0, GLES31.GL_WRITE_ONLY, GL_RGBA16F)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(rcdWriteProg, "uImageSize"), w, h)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(rcdWriteProg, "uCfaPattern"), cfa)
+        GLES31.glUniform3f(GLES31.glGetUniformLocation(rcdWriteProg, "uCalculationGains"), 1f, 1f, 1f)
+        GLES31.glDispatchCompute(gx, gy, 1)
+        GLES31.glMemoryBarrier(SHADER_STORAGE_BARRIER or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
+    }
+
+    /** 用 RCD 输出纹理绘制（替代 BILINEAR_BODY 路径）。 */
+    private fun drawRcd(u: RcdUniforms) {
+        if (rcdOutTexId == 0) return
+        GLES31.glUseProgram(u.id)
+        val (ax, ay) = aspectScale()
+        GLES31.glUniform2f(u.uAspectScale, ax, ay)
+        GLES31.glUniform1i(u.uOrientation, orientation)
+        GLES31.glUniform1i(u.uMirror, if (mirror) 1 else 0)
+
+        GLES31.glActiveTexture(GLES31.GL_TEXTURE0)
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rcdOutTexId)
+        GLES31.glUniform1i(u.uInputTex, 0)
+
+        GLES31.glUniformMatrix3fv(u.uCCM, 1, false, ccm, 0)
+        GLES31.glUniform1f(u.uToneMapD, toneMapD)
+        GLES31.glUniform1f(u.uToneMapE, toneMapE)
+
+        GLES31.glActiveTexture(GLES31.GL_TEXTURE3)
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, toneCurveTexId)
+        GLES31.glUniform1i(u.uToneCurveLUT, 3)
+
+        GLES31.glActiveTexture(GLES31.GL_TEXTURE1)
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_3D, lutTextureId)
+        GLES31.glUniform1i(u.uLutTex, 1)
+        GLES31.glUniform1f(u.uLutSizeLoc, 33.0f)
+        GLES31.glUniform1i(u.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
+
+        GLES31.glActiveTexture(GLES31.GL_TEXTURE2)
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, lscTexId)
+        GLES31.glUniform1i(u.uLscGainTex, 2)
+        GLES31.glUniform2f(u.uLscGridSize, lscGridCols.toFloat(), lscGridRows.toFloat())
+        GLES31.glUniform1i(u.uEnableLsc, if (lscGainMap != null) 1 else 0)
+
+        drawQuadRaw(u.aPos, u.aTexCoord)
+    }
+
+    private fun drawQuadRaw(aPos: Int, aTex: Int) {
+        GLES31.glEnableVertexAttribArray(aPos)
+        GLES31.glVertexAttribPointer(aPos, 2, GLES31.GL_FLOAT, false, 0, floatBuf(quadVerts))
+        GLES31.glEnableVertexAttribArray(aTex)
+        GLES31.glVertexAttribPointer(aTex, 2, GLES31.GL_FLOAT, false, 0, floatBuf(quadUVs))
+        GLES31.glDrawArrays(GLES31.GL_TRIANGLE_STRIP, 0, 4)
+    }
+
     /** 画全屏四边形。 */
     private fun drawQuad(u: ProgUniforms) {
         u.aPos.also {
@@ -316,6 +639,7 @@ class RawPipeline : GLSurfaceView.Renderer {
             if (!uploadRaw(data)) { drawTestPattern(); return }
         }
 
+        // 预览用 MHC（快），RCD 仅用于拍照出图
         drawBayer(progBilinear, uniBilinear)
     }
 
@@ -426,22 +750,32 @@ class RawPipeline : GLSurfaceView.Renderer {
 
         try { ensureCaptureFbo(outW, outH) } catch (e: Exception) { return null }
 
-        // 上传 RAW: 用与预览一致的 GL_R16 + GL_UNSIGNED_SHORT，避免 GL_R16F 兼容问题
+        // 上传 RAW
         val shortBuf = ByteBuffer.allocateDirect(w * h * 2).order(ByteOrder.nativeOrder())
         shortBuf.asShortBuffer().put(bayer)
         shortBuf.position(0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texId)
-        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GL_R16, w, h, 0, GLES30.GL_RED, GLES30.GL_UNSIGNED_SHORT, shortBuf)
 
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, captureFbo)
         GLES30.glViewport(0, 0, captureTexW, captureTexH)
         GLES30.glClearColor(0f, 0f, 0f, 1f)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-        useProgram(progBilinear)
-        setBayerUniforms(uniBilinear, 1f, 1f)
-        bindLut(uniBilinear)
-        bindLsc(uniBilinear)
-        drawQuad(uniBilinear)
+
+        if (rcdEnabled && rcdOutTexId != 0) {
+            ensureRcdBuffers(w, h)
+            GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rcdRawTexId)
+            GLES31.glTexSubImage2D(GLES31.GL_TEXTURE_2D, 0, 0, 0, w, h, GLES31.GL_RED_INTEGER, GLES31.GL_UNSIGNED_SHORT, shortBuf)
+            dispatchRcd(w, h, cfaType, floatArrayOf(blackLevelR, blackLevelG, blackLevelG, blackLevelB),
+                whiteLevel, floatArrayOf(wbR, wbG, wbG, wbB))
+            drawRcdToFbo()
+        } else {
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texId)
+            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GL_R16, w, h, 0, GLES30.GL_RED, GLES30.GL_UNSIGNED_SHORT, shortBuf)
+            useProgram(progBilinear)
+            setBayerUniforms(uniBilinear, 1f, 1f)
+            bindLut(uniBilinear)
+            bindLsc(uniBilinear)
+            drawQuad(uniBilinear)
+        }
 
         return readCaptureBitmap(outW, outH)
     }
@@ -622,6 +956,15 @@ class RawPipeline : GLSurfaceView.Renderer {
         if (lscTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(lscTexId), 0); lscTexId = 0 }
         if (toneCurveTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(toneCurveTexId), 0); toneCurveTexId = 0 }
         if (progBilinear != 0) { GLES30.glDeleteProgram(progBilinear); progBilinear = 0 }
+        if (rcdRawTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(rcdRawTexId), 0); rcdRawTexId = 0 }
+        if (rcdOutTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(rcdOutTexId), 0); rcdOutTexId = 0 }
+        if (rcdSsbo[0] != 0) { GLES31.glDeleteBuffers(9, rcdSsbo, 0); rcdSsbo.fill(0) }
+        if (progRcd != 0) { GLES30.glDeleteProgram(progRcd); progRcd = 0 }
+        val progs = intArrayOf(rcdPopulateProg, rcdStep1Prog, rcdStep2Prog, rcdStep3Prog, rcdStep40Prog, rcdStep41Prog, rcdStep42Prog, rcdStep43Prog, rcdWriteProg)
+        for (p in progs) if (p != 0) GLES30.glDeleteProgram(p)
+        rcdPopulateProg = 0; rcdStep1Prog = 0; rcdStep2Prog = 0; rcdStep3Prog = 0
+        rcdStep40Prog = 0; rcdStep41Prog = 0; rcdStep42Prog = 0; rcdStep43Prog = 0; rcdWriteProg = 0
+        rcdInitialized = false; rcdEnabled = false
     }
 
     // ====================== GL 工具 ======================
@@ -673,6 +1016,27 @@ class RawPipeline : GLSurfaceView.Renderer {
             throw RuntimeException("compile fail: ${GLES30.glGetShaderInfoLog(s)}\n$src")
         }
         return s
+    }
+
+    private fun compileCompute(src: String): Int {
+        val s = GLES31.glCreateShader(GLES31.GL_COMPUTE_SHADER)
+        GLES31.glShaderSource(s, src)
+        GLES31.glCompileShader(s)
+        val ok = IntArray(1)
+        GLES31.glGetShaderiv(s, GLES31.GL_COMPILE_STATUS, ok, 0)
+        if (ok[0] != GLES31.GL_TRUE) {
+            throw RuntimeException("compute compile fail: ${GLES31.glGetShaderInfoLog(s)}")
+        }
+        val p = GLES31.glCreateProgram()
+        GLES31.glAttachShader(p, s)
+        GLES31.glLinkProgram(p)
+        val link = IntArray(1)
+        GLES31.glGetProgramiv(p, GLES31.GL_LINK_STATUS, link, 0)
+        if (link[0] != GLES31.GL_TRUE) {
+            throw RuntimeException("compute link fail: ${GLES31.glGetProgramInfoLog(p)}")
+        }
+        GLES31.glDeleteShader(s)
+        return p
     }
 
     // ====================== 着色器 ======================
@@ -784,6 +1148,58 @@ void main() {
                 vUV = vec2(1.0 - uv.y, uv.x);
             }
             gl_Position = vec4(aPos * uAspectScale, 0.0, 1.0);
+        }
+    """.trimIndent()
+
+    // ===== RCD 后处理 Fragment Shader =====
+    //
+    // 从 RCD 输出纹理采样 RGB → WB → CCM → 色调映射 → sRGB Gamma → LUT
+
+    private val RCD_FRAGMENT_SHADER = """
+        #version 300 es
+        precision highp float;
+        precision highp sampler3D;
+        uniform sampler2D uInputTex;
+        uniform mat3 uCCM;
+        uniform float uToneMapD;
+        uniform float uToneMapE;
+        uniform sampler2D uToneCurveLUT;
+        uniform highp sampler3D uLutTexture;
+        uniform float uLutSize;
+        uniform bool uEnableLut;
+        uniform sampler2D uLscGainTex;
+        uniform vec2 uLscGridSize;
+        uniform bool uEnableLsc;
+        in vec2 vUV;
+        out vec4 frag;
+
+        vec3 applyLUT(vec3 color) {
+            vec3 coord = (color * (uLutSize - 1.0) + 0.5) / uLutSize;
+            return texture(uLutTexture, coord).rgb;
+        }
+
+        vec3 applyToneCurve(vec3 color) {
+            float l = dot(color, vec3(0.2126, 0.7152, 0.0722));
+            float m = texture(uToneCurveLUT, vec2(l, 0.5)).r;
+            return color * (m / max(l, 0.001));
+        }
+
+        void main() {
+            vec3 rgb = texture(uInputTex, vUV).rgb;
+            if (uEnableLsc) {
+                vec2 tc = vec2((vUV.x * (uLscGridSize.x - 1.0) + 0.5) / uLscGridSize.x,
+                               (vUV.y * (uLscGridSize.y - 1.0) + 0.5) / uLscGridSize.y);
+                vec4 gain = texture(uLscGainTex, tc);
+                rgb *= vec3(gain.r, gain.g, gain.b);
+            }
+            rgb = uCCM * rgb;
+            rgb = max(rgb, 0.0);
+            const float a = 2.51, b = 0.03, c = 2.43;
+            rgb = rgb * (a * rgb + b) / (rgb * (c * rgb + uToneMapD) + uToneMapE);
+            rgb = applyToneCurve(rgb);
+            rgb = mix(12.92 * rgb, 1.055 * pow(rgb, vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), rgb));
+            if (uEnableLut) rgb = applyLUT(rgb);
+            frag = vec4(rgb, 1.0);
         }
     """.trimIndent()
 

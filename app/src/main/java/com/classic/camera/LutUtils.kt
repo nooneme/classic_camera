@@ -2,28 +2,56 @@ package com.classic.camera
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import java.io.BufferedReader
 import java.io.File
 
 object LutUtils {
     const val LUT_SIZE = 33
 
     fun loadCubeFile(file: File): FloatArray? {
-        val lut = FloatArray(LUT_SIZE * LUT_SIZE * LUT_SIZE * 3)
+        val total = LUT_SIZE * LUT_SIZE * LUT_SIZE
+        val lut = FloatArray(total * 3)
         var idx = 0
-        file.forEachLine { line ->
-            if (idx >= lut.size) return@forEachLine
-            val trimmed = line.trim()
-            if (trimmed.isEmpty() || trimmed.startsWith("#") ||
-                trimmed.startsWith("TITLE") || trimmed.startsWith("LUT_3D_SIZE") ||
-                trimmed.startsWith("DOMAIN")) return@forEachLine
-            val parts = trimmed.split("\\s+".toRegex())
-            if (parts.size < 3) return@forEachLine
-            lut[idx * 3] = parts[0].toFloatOrNull() ?: return@forEachLine
-            lut[idx * 3 + 1] = parts[1].toFloatOrNull() ?: return@forEachLine
-            lut[idx * 3 + 2] = parts[2].toFloatOrNull() ?: return@forEachLine
+        val reader: BufferedReader = file.bufferedReader()
+        var line = reader.readLine()
+        while (line != null && idx < total) {
+            var p = 0
+            val len = line.length
+            // 跳过前导空白
+            while (p < len && line[p] <= ' ') p++
+            if (p >= len || line[p] == '#') {
+                line = reader.readLine()
+                continue
+            }
+            // 跳过标题行（非纯数字开头）
+            val c = line[p]
+            if (c != '-' && c != '+' && c != '.' && (c < '0' || c > '9')) {
+                line = reader.readLine()
+                continue
+            }
+            // parse r
+            val rStart = p
+            while (p < len && line[p] > ' ') p++
+            val r = line.substring(rStart, p).toFloat()
+            // parse g
+            while (p < len && line[p] <= ' ') p++
+            val gStart = p
+            while (p < len && line[p] > ' ') p++
+            val g = line.substring(gStart, p).toFloat()
+            // parse b
+            while (p < len && line[p] <= ' ') p++
+            val bStart = p
+            while (p < len && line[p] > ' ') p++
+            val b = line.substring(bStart, p).toFloat()
+            val base = idx * 3
+            lut[base] = r
+            lut[base + 1] = g
+            lut[base + 2] = b
             idx++
+            line = reader.readLine()
         }
-        return if (idx == LUT_SIZE * LUT_SIZE * LUT_SIZE) lut else null
+        reader.close()
+        return if (idx == total) lut else null
     }
 
     fun createLutBitmap(lutFloatArray: FloatArray): Bitmap {

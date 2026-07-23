@@ -2,14 +2,16 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical">
+    android:orientation="vertical"
+    android:background="#000000">
 
     <!-- 预览区：GLSurfaceView 跑 RAW 着色器管线 -->
     <android.opengl.GLSurfaceView
         android:id="@+id/glSurfaceView"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_weight="1"
+        android:layout_marginTop="60dp" />
 
     <!-- 实时状态栏：快门 / ISO / 滤镜 -->
     <LinearLayout
@@ -196,6 +198,45 @@
             android:contentDescription="设置" />
     </FrameLayout>
 
+    <!-- LUT 选择栏：横向滚动 -->
+    <LinearLayout
+        android:id="@+id/lutSelectorBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="3dp"
+        android:background="#1A1A1A">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="LUT"
+            android:textColor="#888888"
+            android:textSize="10sp"
+            android:layout_marginEnd="6dp" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/lutRecyclerView"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:clipToPadding="false"
+            android:paddingEnd="4dp" />
+
+        <ImageView
+            android:id="@+id/btnManageFilters"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:src="@drawable/ic_settings_gear"
+            android:scaleType="center"
+            android:background="@drawable/settings_gear_bg"
+            android:contentDescription="管理滤镜"
+            android:layout_marginStart="4dp" />
+    </LinearLayout>
+
     <!-- 底部镜头按钮栏：横向滚动 -->
     <HorizontalScrollView
         android:id="@+id/lensScroll"
@@ -209,7 +250,8 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:padding="6dp" />
+            android:paddingVertical="2dp"
+            android:paddingHorizontal="6dp" />
     </HorizontalScrollView>
 
 </LinearLayout>
