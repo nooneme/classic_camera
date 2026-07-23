@@ -59,6 +59,7 @@ class FilterActivity : AppCompatActivity() {
         }
 
         setupFileObserver()
+        LutUtils.seedPresetFilters(this)
     }
 
     private fun setupFileObserver() {

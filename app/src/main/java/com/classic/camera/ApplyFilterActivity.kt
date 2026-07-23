@@ -76,6 +76,7 @@ class ApplyFilterActivity : AppCompatActivity() {
             imagePicker.launch(Intent(this, GalleryActivity::class.java))
         }
 
+        LutUtils.seedPresetFilters(this)
         loadFilters()
 
         filterSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {

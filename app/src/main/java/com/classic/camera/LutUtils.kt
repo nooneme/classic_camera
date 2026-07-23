@@ -1,5 +1,7 @@
 package com.classic.camera
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.Color
 import java.io.BufferedReader
@@ -73,5 +75,33 @@ object LutUtils {
         }
         bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
         return bitmap
+    }
+
+    private const val PREFS_NAME = "preset_filters"
+    private const val KEY_SEEDED = "seeded"
+
+    fun seedPresetFilters(context: Context) {
+        val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(KEY_SEEDED, false)) return
+
+        val destDir = context.getExternalFilesDir("filters") ?: context.filesDir
+        destDir.mkdirs()
+
+        try {
+            val list = context.assets.list("filters") ?: return
+            for (name in list) {
+                if (!name.endsWith(".cube")) continue
+                val destFile = File(destDir, name)
+                if (destFile.exists()) continue
+                context.assets.open("filters/$name").use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+            prefs.edit().putBoolean(KEY_SEEDED, true).apply()
+        } catch (e: Exception) {
+            android.util.Log.e("LutUtils", "seed preset filters failed", e)
+        }
     }
 }
