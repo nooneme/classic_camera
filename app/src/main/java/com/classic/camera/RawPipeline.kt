@@ -68,7 +68,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         // tone mapping
         var uToneMapD = 0; var uToneMapE = 0
         // LUT
-        var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0
+        var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0; var uLutIntensity = 0
         // tone curve
         var uToneCurveLUT = 0
         // LSC
@@ -100,6 +100,7 @@ class RawPipeline : GLSurfaceView.Renderer {
             uLutTex = GLES30.glGetUniformLocation(id, "uLutTexture")
             uLutSizeLoc = GLES30.glGetUniformLocation(id, "uLutSize")
             uEnableLut = GLES30.glGetUniformLocation(id, "uEnableLut")
+            uLutIntensity = GLES30.glGetUniformLocation(id, "uLutIntensity")
         }
     }
 
@@ -111,6 +112,7 @@ class RawPipeline : GLSurfaceView.Renderer {
     @Volatile var lutFloatArray: FloatArray? = null
     private var lutTextureId = 0
     private var lutEnabled = false
+    @Volatile var lutIntensity: Float = 1f
 
     // ---- 色调曲线 ----
     @Volatile var toneCurvePoints: FloatArray? = null
@@ -152,7 +154,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         var uAspectScale = 0; var uOrientation = 0; var uMirror = 0
         var uToneMapD = 0; var uToneMapE = 0
         var uToneCurveLUT = 0
-        var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0
+        var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0; var uLutIntensity = 0
         var uLscGainTex = 0; var uLscGridSize = 0; var uEnableLsc = 0
         fun lookup() {
             aPos = GLES30.glGetAttribLocation(id, "aPos")
@@ -168,6 +170,7 @@ class RawPipeline : GLSurfaceView.Renderer {
             uLutTex = GLES30.glGetUniformLocation(id, "uLutTexture")
             uLutSizeLoc = GLES30.glGetUniformLocation(id, "uLutSize")
             uEnableLut = GLES30.glGetUniformLocation(id, "uEnableLut")
+            uLutIntensity = GLES30.glGetUniformLocation(id, "uLutIntensity")
             uLscGainTex = GLES30.glGetUniformLocation(id, "uLscGainTex")
             uLscGridSize = GLES30.glGetUniformLocation(id, "uLscGridSize")
             uEnableLsc = GLES30.glGetUniformLocation(id, "uEnableLsc")
@@ -438,6 +441,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES31.glUniform1i(uniRcd.uLutTex, 1)
         GLES31.glUniform1f(uniRcd.uLutSizeLoc, 33.0f)
         GLES31.glUniform1i(uniRcd.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
+        GLES31.glUniform1f(uniRcd.uLutIntensity, lutIntensity)
         GLES31.glActiveTexture(GLES31.GL_TEXTURE2)
         GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, lscTexId)
         GLES31.glUniform1i(uniRcd.uLscGainTex, 2)
@@ -572,6 +576,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES31.glUniform1i(u.uLutTex, 1)
         GLES31.glUniform1f(u.uLutSizeLoc, 33.0f)
         GLES31.glUniform1i(u.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
+        GLES31.glUniform1f(u.uLutIntensity, lutIntensity)
 
         GLES31.glActiveTexture(GLES31.GL_TEXTURE2)
         GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, lscTexId)
@@ -651,6 +656,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1i(u.uLutTex, 1)
         GLES30.glUniform1f(u.uLutSizeLoc, 33.0f)
         GLES30.glUniform1i(u.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
+        GLES30.glUniform1f(u.uLutIntensity, lutIntensity)
     }
 
     /** 绑定 LSC gain map 纹理并设置 uniform。 */
@@ -1062,6 +1068,7 @@ uniform vec2 uCFAOffset;
 uniform highp sampler3D uLutTexture;
 uniform float uLutSize;
 uniform bool uEnableLut;
+uniform float uLutIntensity;
 uniform sampler2D uLscGainTex;
 uniform vec2 uLscGridSize;
 uniform bool uEnableLsc;
@@ -1095,7 +1102,7 @@ float fix(float raw, int ch, vec2 lscUV) {
 
 vec3 applyLUT(vec3 color) {
     vec3 coord = (color * (uLutSize - 1.0) + 0.5) / uLutSize;
-    return texture(uLutTexture, coord).rgb;
+    return mix(color, texture(uLutTexture, coord).rgb, uLutIntensity);
 }
 
 vec3 applyToneCurve(vec3 color) {
@@ -1167,6 +1174,7 @@ void main() {
         uniform highp sampler3D uLutTexture;
         uniform float uLutSize;
         uniform bool uEnableLut;
+        uniform float uLutIntensity;
         uniform sampler2D uLscGainTex;
         uniform vec2 uLscGridSize;
         uniform bool uEnableLsc;
@@ -1175,7 +1183,7 @@ void main() {
 
         vec3 applyLUT(vec3 color) {
             vec3 coord = (color * (uLutSize - 1.0) + 0.5) / uLutSize;
-            return texture(uLutTexture, coord).rgb;
+            return mix(color, texture(uLutTexture, coord).rgb, uLutIntensity);
         }
 
         vec3 applyToneCurve(vec3 color) {

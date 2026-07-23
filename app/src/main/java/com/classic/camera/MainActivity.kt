@@ -731,6 +731,37 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(curveView)
 
+        // ---- LUT 应用强度 ----
+        val lutIntensity = prefs.getFloat("lut_intensity", 1f)
+        val tvLutIntensity = TextView(this).apply {
+            text = "滤镜强度: ${(lutIntensity * 100).toInt()}%"
+            textSize = 15f
+            setPadding(48, 16, 48, 4)
+        }
+        glSurfaceView.queueEvent { pipeline?.lutIntensity = lutIntensity }
+        val sbLutIntensity = SeekBar(this).apply {
+            max = 100
+            progress = (lutIntensity * 100).roundToInt().coerceIn(0, 100)
+            setPadding(48, 0, 48, 16)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    tvLutIntensity.text = "滤镜强度: ${progress}%"
+                    glSurfaceView.queueEvent { pipeline?.lutIntensity = progress / 100f }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {
+                    glSurfaceView.queueEvent { pipeline?.lutIntensity = seekBar.progress / 100f }
+                    showToneMapPreview(tvLutIntensity, seekBar)
+                }
+                override fun onStopTrackingTouch(seekBar: SeekBar) {
+                    val v = seekBar.progress / 100f
+                    prefs.edit().putFloat("lut_intensity", v).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+        layout.addView(tvLutIntensity)
+        layout.addView(sbLutIntensity)
+
         val btnReset = Button(this).apply {
             text = "恢复默认"
             isAllCaps = false
@@ -766,6 +797,11 @@ class MainActivity : AppCompatActivity() {
                 ToneCurve.save(prefs, defaultCurve)
                 val nativeArr = defaultCurve.toNativeArray()
                 glSurfaceView.queueEvent { pipeline?.setToneCurve(nativeArr) }
+                // 重置滤镜强度
+                sbLutIntensity.progress = 100
+                tvLutIntensity.text = "滤镜强度: 100%"
+                glSurfaceView.queueEvent { pipeline?.lutIntensity = 1f }
+                prefs.edit().putFloat("lut_intensity", 1f).apply()
             }
         }
         layout.addView(btnReset)
