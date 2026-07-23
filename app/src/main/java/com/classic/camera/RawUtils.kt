@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.media.ExifInterface
+import android.net.Uri
 import android.media.Image
 import android.os.Build
 import android.os.Environment
@@ -115,7 +116,7 @@ fun saveBitmapAsJpeg(
     aperture: Float? = null,
     focalLength: Float? = null,
     focalLength35mm: Int? = null
-): String {
+): Pair<String, Uri?> {
     val tStart = System.nanoTime()
     val resolver = context.contentResolver
     val values = ContentValues().apply {
@@ -127,7 +128,7 @@ fun saveBitmapAsJpeg(
         }
     }
     val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-        ?: return displayName
+        ?: return Pair(displayName, null)
     try {
         val tCompressStart = System.nanoTime()
         resolver.openOutputStream(uri)?.use { out: OutputStream ->
@@ -180,6 +181,6 @@ fun saveBitmapAsJpeg(
     } catch (e: Exception) {
         // ignore
     }
-    return displayName
+    return Pair(displayName, uri)
 }
 

@@ -93,7 +93,7 @@ class ApplyFilterActivity : AppCompatActivity() {
         btnSave.setOnClickListener {
             val bmp = resultBitmap ?: return@setOnClickListener
             val name = "filter_${System.currentTimeMillis()}.jpg"
-            saveBitmapAsJpeg(this, bmp, name)
+            val (_, savedUri) = saveBitmapAsJpeg(this, bmp, name)
             Toast.makeText(this, "已保存到 DCIM/Camera/", Toast.LENGTH_SHORT).show()
         }
     }

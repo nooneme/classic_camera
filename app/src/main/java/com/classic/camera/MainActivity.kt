@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
@@ -16,6 +17,7 @@ import javax.microedition.khronos.egl.EGL10
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.egl.EGLContext
 import javax.microedition.khronos.egl.EGLDisplay
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -95,6 +97,14 @@ class MainActivity : AppCompatActivity() {
             field = value
             getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
                 .putString("current_filter_path", value).apply()
+        }
+
+    /** 最后拍摄的照片 URI（为空串表示无照片） */
+    private var lastPhotoUri: String = ""
+        set(value) {
+            field = value
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putString("last_photo_uri", value).apply()
         }
 
     // ---- LUT 选择器 ----
@@ -229,6 +239,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         loadLutList()
+        restoreLastPhotoUri()
 
         glSurfaceView.setRenderer(pipeline)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
@@ -290,12 +301,22 @@ class MainActivity : AppCompatActivity() {
             ensurePermission { startDetection() }
         }
 
-        // 滤镜按钮
+        // 最后照片按钮（原滤镜按钮）
         btnFilter.setOnClickListener {
-            val intent = Intent(this, FilterActivity::class.java).apply {
-                putExtra("current_filter", currentFilterPath)
+            if (lastPhotoUri.isEmpty()) {
+                Toast.makeText(this, "还没有拍照片", Toast.LENGTH_SHORT).show()
+            } else {
+                try {
+                    val uri = Uri.parse(lastPhotoUri)
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, "image/jpeg")
+                        flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(this, "无法打开照片", Toast.LENGTH_SHORT).show()
+                }
             }
-            filterLauncher.launch(intent)
         }
 
         // 设置按钮
@@ -795,6 +816,58 @@ class MainActivity : AppCompatActivity() {
         lutAdapter.loadFromDirectory(dir)
     }
 
+    // ================= 最后照片按钮 =================
+
+    /** 恢复最后照片 URI 并更新按钮图标。 */
+    private fun restoreLastPhotoUri() {
+        lastPhotoUri = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString("last_photo_uri", "") ?: ""
+        refreshLastPhotoButton()
+    }
+
+    /** 根据 lastPhotoUri 更新按钮图标。 */
+    private fun refreshLastPhotoButton() {
+        if (lastPhotoUri.isEmpty()) {
+            btnFilter.setImageResource(R.drawable.ic_photo)
+            btnFilter.scaleType = android.widget.ImageView.ScaleType.CENTER
+        } else {
+            try {
+                val uri = Uri.parse(lastPhotoUri)
+                val targetSize = (44 * resources.displayMetrics.density + 0.5f).toInt()
+                var sampleSize = 1
+                contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                    val opts = BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+                    BitmapFactory.decodeFileDescriptor(pfd.fileDescriptor, null, opts)
+                    while (opts.outWidth / (sampleSize * 2) > targetSize && opts.outHeight / (sampleSize * 2) > targetSize) {
+                        sampleSize *= 2
+                    }
+                }
+                var bmp: Bitmap? = null
+                contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                    val opts = BitmapFactory.Options().apply {
+                        inSampleSize = sampleSize
+                    }
+                    bmp = BitmapFactory.decodeFileDescriptor(pfd.fileDescriptor, null, opts)
+                }
+                if (bmp != null) {
+                    val thumb = Bitmap.createScaledBitmap(bmp, targetSize, targetSize, true)
+                    btnFilter.setImageBitmap(thumb)
+                    btnFilter.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                    if (bmp !== thumb) bmp.recycle()
+                } else {
+                    btnFilter.setImageResource(R.drawable.ic_photo)
+                    btnFilter.scaleType = android.widget.ImageView.ScaleType.CENTER
+                }
+            } catch (e: Exception) {
+                Log.e(LOG_TAG, "Failed to load photo thumbnail", e)
+                btnFilter.setImageResource(R.drawable.ic_photo)
+                btnFilter.scaleType = android.widget.ImageView.ScaleType.CENTER
+            }
+        }
+    }
+
     companion object {
         private const val HEAVY = 1           // 边界大震 50ms
         private const val TICK = 2             // 调节小震 6ms
@@ -946,6 +1019,12 @@ class MainActivity : AppCompatActivity() {
             cameraController = it
             it.manualController = manualController  // 注入手动曝光控制器
             it.onExposureComplete = { stopCaptureVibration() }
+            it.onPhotoSaved = { uri ->
+                if (uri != null) {
+                    lastPhotoUri = uri.toString()
+                    runOnUiThread { refreshLastPhotoButton() }
+                }
+            }
             it.saveDng = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("save_dng", true)
             val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             it.multiFrameCount = if (prefs.getBoolean("multi_frame", true)) prefs.getInt("multi_frame_count", 4).coerceIn(2, 8) else 1

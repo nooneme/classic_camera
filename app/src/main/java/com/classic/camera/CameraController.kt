@@ -76,6 +76,9 @@ class CameraController(
     // 实时曝光参数回调（每帧预览时触发，用于状态栏显示实际 ISO/快门）
     var onExposureInfo: ((iso: Int?, exposureNs: Long?) -> Unit)? = null
 
+    // 拍照保存完成回调：通知外部最后一张照片的 content URI
+    var onPhotoSaved: ((uri: Uri?) -> Unit)? = null
+
     // 拍照同步：等 Image 和 CaptureResult 都到达
     private var pendingImage: Image? = null
     private var pendingResult: TotalCaptureResult? = null
@@ -672,9 +675,13 @@ class CameraController(
                             val cropFactor = 43.27 / diag
                             (lens.focalLength * cropFactor).roundToInt()
                         } else null
-                        jpgName = saveBitmapAsJpeg(context, bitmap,
+                        val (multiJpgName, multiUri) = saveBitmapAsJpeg(context, bitmap,
                             "IMG_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())}.jpg",
                             iso, exposureNs, aperture, actualFl, equivFl)
+                        jpgName = multiJpgName
+                        if (multiUri != null) {
+                            onPhotoSaved?.invoke(multiUri)
+                        }
                         Log.d(LOG_TAG, String.format("multiFrame: JPEG saved in %.1fms",
                             (System.nanoTime() - tJpegStart) / 1_000_000.0))
                     }
@@ -861,7 +868,11 @@ class CameraController(
             (lens.focalLength * cropFactor).roundToInt()
         } else null
 
-        return saveBitmapAsJpeg(context, bitmap, displayName, iso, exposureTimeNs, aperture, actualFl, equivFl)
+        val (jpgName, uri) = saveBitmapAsJpeg(context, bitmap, displayName, iso, exposureTimeNs, aperture, actualFl, equivFl)
+        if (uri != null) {
+            onPhotoSaved?.invoke(uri)
+        }
+        return jpgName
     }
 
     /** 复用 DYNAMIC_KEYS：取本次拍照的动态字段，供回调/log。 */
