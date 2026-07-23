@@ -1048,6 +1048,21 @@ class CameraController(
         updateCaptureParams()
     }
 
+    /** 暂停预览（不释放相机硬件，只停止传帧）。 */
+    fun pausePreview() {
+        try {
+            session?.stopRepeating()
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "pausePreview err", e)
+        }
+    }
+
+    /** 恢复预览（用已有 session/device 重新开始 repeating）。 */
+    fun resumePreview() {
+        val s = session ?: return
+        startRawRepeating(s)
+    }
+
     fun close() {
         resetFocus()
         openSeq++ // 作废回调

@@ -174,9 +174,9 @@
         android:paddingVertical="0dp"
         android:background="#222222">
 
-        <!-- 滤镜按钮：快门左边与屏幕边缘的中间位置 -->
+        <!-- 最后照片按钮：快门左边与屏幕边缘的中间位置 -->
         <ImageButton
-            android:id="@+id/btnFilter"
+            android:id="@+id/btnLastPhoto"
             android:layout_width="44dp"
             android:layout_height="44dp"
             android:layout_gravity="start|center_vertical"

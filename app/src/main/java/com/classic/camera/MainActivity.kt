@@ -52,7 +52,7 @@ class MainActivity : AppCompatActivity() {
     // UI 组件
     private lateinit var glSurfaceView: GLSurfaceView
     private lateinit var btnShutter: ImageButton
-    private lateinit var btnFilter: ImageButton
+    private lateinit var btnLastPhoto: ImageButton
     private lateinit var btnSettings: ImageButton
     private lateinit var lensButtonBar: LinearLayout
 
@@ -153,7 +153,7 @@ class MainActivity : AppCompatActivity() {
 
         glSurfaceView = findViewById(R.id.glSurfaceView)
         btnShutter = findViewById(R.id.btnShutter)
-        btnFilter = findViewById(R.id.btnFilter)
+        btnLastPhoto = findViewById(R.id.btnLastPhoto)
         btnSettings = findViewById(R.id.btnSettings)
         lensButtonBar = findViewById(R.id.lensButtonBar)
 
@@ -303,7 +303,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 最后照片按钮（原滤镜按钮）
-        btnFilter.setOnClickListener {
+        btnLastPhoto.setOnClickListener {
             if (lastPhotoUri.isEmpty()) {
                 Toast.makeText(this, "还没有拍照片", Toast.LENGTH_SHORT).show()
             } else {
@@ -865,8 +865,8 @@ class MainActivity : AppCompatActivity() {
     /** 根据 lastPhotoUri 更新按钮图标。 */
     private fun refreshLastPhotoButton() {
         if (lastPhotoUri.isEmpty()) {
-            btnFilter.setImageResource(R.drawable.ic_photo)
-            btnFilter.scaleType = android.widget.ImageView.ScaleType.CENTER
+            btnLastPhoto.setImageResource(R.drawable.ic_photo)
+            btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.CENTER
         } else {
             try {
                 val uri = Uri.parse(lastPhotoUri)
@@ -890,17 +890,17 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (bmp != null) {
                     val thumb = Bitmap.createScaledBitmap(bmp, targetSize, targetSize, true)
-                    btnFilter.setImageBitmap(thumb)
-                    btnFilter.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                    btnLastPhoto.setImageBitmap(thumb)
+                    btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
                     if (bmp !== thumb) bmp.recycle()
                 } else {
-                    btnFilter.setImageResource(R.drawable.ic_photo)
-                    btnFilter.scaleType = android.widget.ImageView.ScaleType.CENTER
+                    btnLastPhoto.setImageResource(R.drawable.ic_photo)
+                    btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.CENTER
                 }
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "Failed to load photo thumbnail", e)
-                btnFilter.setImageResource(R.drawable.ic_photo)
-                btnFilter.scaleType = android.widget.ImageView.ScaleType.CENTER
+                btnLastPhoto.setImageResource(R.drawable.ic_photo)
+                btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.CENTER
             }
         }
     }
@@ -1376,7 +1376,7 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         glSurfaceView.onPause()
-        cameraController?.close()
+        cameraController?.pausePreview()
         captureVibHandler.removeCallbacksAndMessages(null)
         captureVibRunning = false
     }
@@ -1384,9 +1384,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         glSurfaceView.onResume()
-        if (selectedLens != null) {
-            ensurePermission { openSelectedLensPreview() }
-        }
+        cameraController?.resumePreview()
         loadLutList()
     }
 
