@@ -25,6 +25,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
+import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.ImageButton
@@ -231,6 +232,37 @@ class MainActivity : AppCompatActivity() {
 
         glSurfaceView.setRenderer(pipeline)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
+        val focusIndicator = findViewById<View>(R.id.focusIndicator)
+        glSurfaceView.setOnTouchListener { _, event ->
+            if (event.action == android.view.MotionEvent.ACTION_UP) {
+                val vw = glSurfaceView.width
+                val vh = glSurfaceView.height
+                viewToSensorNorm(event.x / vw, event.y / vh, vw, vh)?.let { (sx, sy) ->
+                    cameraController?.focusOnPoint(sx, sy)
+                }
+
+                // 对焦框：缩小弹入后常亮，直到下次点击
+                val size = (80 * resources.displayMetrics.density + 0.5f).toInt()
+                focusIndicator.apply {
+                    translationX = event.x - size / 2f
+                    translationY = event.y - size / 2f
+                    layoutParams = layoutParams.also {
+                        it.width = size
+                        it.height = size
+                    }
+                    alpha = 1f
+                    scaleX = 1.3f
+                    scaleY = 1.3f
+                    visibility = View.VISIBLE
+                }
+                focusIndicator.animate().cancel()
+                focusIndicator.animate()
+                    .scaleX(1f).scaleY(1f)
+                    .setDuration(200)
+                    .start()
+            }
+            true
+        }
 
         // GPU 多帧融合管线（在 GL context 就绪后的 onSurfaceCreated 中初始化）
         val gpuAligner = GpuAlignMerge()
@@ -963,6 +995,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        controller.onFocusReset = { runOnUiThread { findViewById<View>(R.id.focusIndicator).visibility = View.GONE } }
         // 实时曝光参数回调：自动模式时从 CaptureResult 读取实际值
         controller.onExposureInfo = { iso, exposureNs ->
             runOnUiThread {
@@ -1110,6 +1143,43 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ================= 辅助 =================
+
+    /**
+     * 将屏幕触摸坐标（归一化 [0,1]）映射到传感器归一化坐标，供 focusOnPoint 使用。
+     * 逆运算 OpenGL 顶点着色器的 transform：aspectScale → 镜像 → 旋转
+     */
+    private fun viewToSensorNorm(normX: Float, normY: Float, viewW: Int, viewH: Int): Pair<Float, Float>? {
+        val lens = selectedLens ?: return null
+        val p = pipeline ?: return null
+        if (p.rawW <= 0 || p.rawH <= 0) return null
+
+        val orientation = lens.sensorOrientation
+        val rotated = orientation == 90 || orientation == 270
+        val imageAspect = if (rotated) p.rawH.toFloat() / p.rawW.toFloat()
+                          else p.rawW.toFloat() / p.rawH.toFloat()
+        val viewAspect = viewW.toFloat() / viewH.toFloat()
+
+        // 逆 letterbox（aspectScale 缩放）
+        val ax = if (imageAspect > viewAspect) 1f else imageAspect / viewAspect
+        val ay = if (imageAspect > viewAspect) viewAspect / imageAspect else 1f
+        var u = (normX - (1f - ax) / 2f) / ax
+        var v = (normY - (1f - ay) / 2f) / ay
+        u = u.coerceIn(0f, 1f)
+        v = v.coerceIn(0f, 1f)
+
+        // 直接应用顶点着色器的 forward 变换：screen → [mirror] → [rotate] → sensor
+        // 着色器：uv = aTexCoord; if(mirror) uv.x = 1-uv.x; vUV = f(uv)
+        val mx = if (lens.lensFacing == CameraMetadata.LENS_FACING_FRONT) 1f - u else u
+        val my = v
+        val (sx, sy) = when (orientation) {
+            0    -> Pair(mx, 1f - my)
+            90   -> Pair(my, 1f - mx)
+            180  -> Pair(1f - mx, my)
+            270  -> Pair(1f - my, mx)
+            else -> Pair(mx, 1f - my)
+        }
+        return Pair(sx, sy)
+    }
 
     private fun formatFocalLength(f: Float, lens: LensInfo): String {
         val equiv = if (lens.sensorWidthMm > 0f && lens.sensorHeightMm > 0f) {

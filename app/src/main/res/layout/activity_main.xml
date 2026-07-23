@@ -5,13 +5,25 @@
     android:orientation="vertical"
     android:background="#000000">
 
-    <!-- 预览区：GLSurfaceView 跑 RAW 着色器管线 -->
-    <android.opengl.GLSurfaceView
-        android:id="@+id/glSurfaceView"
+    <!-- 预览区：GLSurfaceView + 对焦指示器叠加层 -->
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:layout_marginTop="60dp" />
+        android:layout_marginTop="60dp">
+
+        <android.opengl.GLSurfaceView
+            android:id="@+id/glSurfaceView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <View
+            android:id="@+id/focusIndicator"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:background="@drawable/focus_rect"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <!-- 实时状态栏：快门 / ISO / 滤镜 -->
     <LinearLayout

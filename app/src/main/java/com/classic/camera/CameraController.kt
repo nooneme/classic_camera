@@ -23,6 +23,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.util.Log
+import android.hardware.camera2.params.MeteringRectangle
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
 import androidx.core.app.ActivityCompat
@@ -51,8 +52,8 @@ class CameraController(
     private val LOG_TAG = "ClassicCamera"
 
     private var currentLens: LensInfo? = null
-    private var cameraDevice: CameraDevice? = null
-    private var session: CameraCaptureSession? = null
+    @Volatile private var cameraDevice: CameraDevice? = null
+    @Volatile private var session: CameraCaptureSession? = null
     private var rawReader: ImageReader? = null
 
     // RAW 预览每帧回调（把 Bayer 数据 + 动态 gain/黑电平/白电平 喂给 RawPipeline）
@@ -80,11 +81,14 @@ class CameraController(
     private var pendingResult: TotalCaptureResult? = null
     private var captureLatch: CountDownLatch? = null
     private var captureCallback: ((dngName: String, jpgName: String, dynamic: Map<String, String>) -> Unit)? = null
-    private var captureCharacteristics: CameraCharacteristics? = null
+    @Volatile private var captureCharacteristics: CameraCharacteristics? = null
 
     // ---- 多帧合成相关 ----
     /** 多帧合成帧数（默认 1 = 单帧） */
     var multiFrameCount: Int = 4
+
+    // ---- 点击对焦 ----
+    private var focusTriggerSeq = 0
 
     /** 是否正在进行多帧连拍 */
     private var multiFrameCapturing = false
@@ -122,7 +126,10 @@ class CameraController(
     var manualController: ManualController? = null
 
     /** 当前 session 的 repeating capture 回调引用，供 updateCaptureParams 重建 request 时复用。 */
-    private var captureCb: CameraCaptureSession.CaptureCallback? = null
+    @Volatile private var captureCb: CameraCaptureSession.CaptureCallback? = null
+
+    /** 对焦状态被取消时回调（MainActivity 借此隐藏对焦框） */
+    var onFocusReset: (() -> Unit)? = null
 
     /** 打开镜头并开始 RAW repeating 预览（RAW 当 preview target）。 */
     fun open(lens: LensInfo) {
@@ -134,6 +141,7 @@ class CameraController(
         // 必须先同步释放上一轮（关 session/device/reader），再开新相机，
         // 否则旧设备未释放完就 configureStreams 会 CAMERA_DISCONNECTED；
         // 同时递增 seq 作废任何在途的旧 onOpened 回调。
+        resetFocus()
         openSeq++
         teardownInternal()
         val mySeq = openSeq
@@ -689,6 +697,7 @@ class CameraController(
                 mainHandler.post {
                     cb(dngName, jpgName)
                 }
+                resetFocus()
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "multiFrame GPU path failed", e)
                 throw e
@@ -723,6 +732,7 @@ class CameraController(
         captureCallback = null
 
         cb(dngName, jpgName, dynamic)
+        resetFocus()
     }
 
     /**
@@ -884,7 +894,151 @@ class CameraController(
     }
 
     /** 释放（生命周期用）。作废当前轮，并回收资源。 */
+    // ====================== 点击对焦 ======================
+
+    /**
+     * 点击屏幕对焦。
+     * @param normX 传感器归一化 X [0,1]（由 MainActivity 完成 view→sensor 变换）
+     * @param normY 传感器归一化 Y [0,1]
+     */
+    fun focusOnPoint(normX: Float, normY: Float) {
+        if (session == null || cameraDevice == null) return
+        val chars = captureCharacteristics ?: return
+        val activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+
+        val afModes = chars.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: return
+        if (afModes.size <= 1 && afModes[0] == CameraMetadata.CONTROL_AF_MODE_OFF) return
+
+        val mySeq = ++focusTriggerSeq
+
+        val halfSize = (activeArray.width() / 100).coerceIn(50, 200)
+        val cx = (normX * activeArray.width()).toInt()
+        val cy = (normY * activeArray.height()).toInt()
+        val rect = MeteringRectangle(
+            (cx - halfSize).coerceIn(0, activeArray.width() - 1),
+            (cy - halfSize).coerceIn(0, activeArray.height() - 1),
+            (halfSize * 2).coerceAtMost(activeArray.width()),
+            (halfSize * 2).coerceAtMost(activeArray.height()),
+            1
+        )
+        val regions = arrayOf(rect)
+
+        try {
+            val dev = cameraDevice!!
+            val reader = rawReader!!
+            val s = session!!
+
+            // Step 0: 解锁上一次对焦/测光锁定
+            val unlockBuilder = dev.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+            unlockBuilder.addTarget(reader.surface)
+            unlockBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_CANCEL)
+            if (manualController?.isManualExposure != true) {
+                unlockBuilder.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
+                    CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_CANCEL)
+            }
+            manualController?.applyTo(unlockBuilder)
+            s.capture(unlockBuilder.build(), null, bgHandler)
+
+            // Step 1: 切换 repeating request 为 AUTO AF + 对焦区域
+            val builder = dev.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+            builder.addTarget(reader.surface)
+            builder.set(CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE,
+                CameraMetadata.STATISTICS_LENS_SHADING_MAP_MODE_ON)
+            builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+            builder.set(CaptureRequest.CONTROL_AF_REGIONS, regions)
+            if (manualController?.isManualExposure != true) {
+                builder.set(CaptureRequest.CONTROL_AE_REGIONS, regions)
+            }
+            builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
+            manualController?.applyTo(builder)
+            s.setRepeatingRequest(builder.build(), captureCb!!, bgHandler)
+
+            // Step 2: 触发 AF 扫描
+            val trigBuilder = dev.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+            trigBuilder.addTarget(reader.surface)
+            trigBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+            trigBuilder.set(CaptureRequest.CONTROL_AF_REGIONS, regions)
+            if (manualController?.isManualExposure != true) {
+                trigBuilder.set(CaptureRequest.CONTROL_AE_REGIONS, regions)
+            }
+            trigBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_START)
+            manualController?.applyTo(trigBuilder)
+            s.capture(trigBuilder.build(), object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(s: CameraCaptureSession, request: CaptureRequest,
+                    result: TotalCaptureResult) {
+                    if (mySeq != focusTriggerSeq) return
+                    val state = result.get(CaptureResult.CONTROL_AF_STATE)
+                    Log.d(LOG_TAG, "AF trigger done, state=$state")
+                }
+            }, bgHandler)
+
+            // Step 3: AF 完成后收敛曝光，然后锁定测光
+            if (manualController?.isManualExposure != true) {
+                // 3a: 触发 AE precapture 使曝光针对点击区域收敛
+                bgHandler.postDelayed({
+                    if (mySeq == focusTriggerSeq) {
+                        val aeBuilder = dev.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                        aeBuilder.addTarget(reader.surface)
+                        aeBuilder.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
+                            CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START)
+                        manualController?.applyTo(aeBuilder)
+                        s.capture(aeBuilder.build(), null, bgHandler)
+                    }
+                }, 800L)
+
+                // 3b: 收敛后锁定 AE（更新 repeating request）
+                bgHandler.postDelayed({
+                    if (mySeq == focusTriggerSeq) {
+                        val lockBuilder = dev.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                        lockBuilder.addTarget(reader.surface)
+                        lockBuilder.set(CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE,
+                            CameraMetadata.STATISTICS_LENS_SHADING_MAP_MODE_ON)
+                        lockBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+                        lockBuilder.set(CaptureRequest.CONTROL_AF_REGIONS, regions)
+                        lockBuilder.set(CaptureRequest.CONTROL_AE_REGIONS, regions)
+                        lockBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true)
+                        lockBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
+                        manualController?.applyTo(lockBuilder)
+                        s.setRepeatingRequest(lockBuilder.build(), captureCb!!, bgHandler)
+                    }
+                }, 1500L)
+            }
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "focusOnPoint err", e)
+        }
+    }
+
+    /**
+     * 取消对焦锁定，恢复默认全局自动对焦/测光。
+     * 适合在切换镜头、拍照完成、划出后台时调用。
+     */
+    /** 取消对焦锁定，恢复默认全局自动对焦/测光。 */
+    fun resetFocus() {
+        focusTriggerSeq++ // 作废所有 pending 聚焦操作
+        onFocusReset?.invoke()
+        val s = session
+        val dev = cameraDevice
+        val reader = rawReader
+        if (s == null || dev == null || reader == null) return
+        try {
+            val unlockBuilder = dev.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+            unlockBuilder.addTarget(reader.surface)
+            unlockBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_CANCEL)
+            if (manualController?.isManualExposure != true) {
+                unlockBuilder.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
+                    CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_CANCEL)
+                unlockBuilder.set(CaptureRequest.CONTROL_AE_LOCK, false)
+            }
+            manualController?.applyTo(unlockBuilder)
+            s.capture(unlockBuilder.build(), null, bgHandler)
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "resetFocus unlock err", e)
+        }
+        updateCaptureParams()
+    }
+
     fun close() {
+        resetFocus()
         openSeq++ // 作废回调
         teardownInternal()
     }
