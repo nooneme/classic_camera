@@ -238,6 +238,7 @@ class MainActivity : AppCompatActivity() {
             filterLauncher.launch(intent)
         }
 
+        LutUtils.seedPresetFilters(this)
         loadLutList()
         restoreLastPhotoUri()
 
