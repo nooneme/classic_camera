@@ -330,7 +330,7 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "相机未就绪", Toast.LENGTH_SHORT).show()
                 } else {
                     startCaptureVibration()
-                    val useMulti = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("multi_frame", true)
+                    val useMulti = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("multi_frame", false)
 
                     if (useMulti) {
                         cameraController?.startMultiCapture { dngName, jpgName ->
@@ -1064,7 +1064,7 @@ class MainActivity : AppCompatActivity() {
             }
             it.saveDng = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("save_dng", true)
             val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            it.multiFrameCount = if (prefs.getBoolean("multi_frame", true)) prefs.getInt("multi_frame_count", 4).coerceIn(2, 8) else 1
+            it.multiFrameCount = if (prefs.getBoolean("multi_frame", false)) prefs.getInt("multi_frame_count", 4).coerceIn(2, 8) else 1
             // GPU JPEG 处理器：通过 queueEvent 在 GL 线程渲染，CountDownLatch 同步等待
             // 返回 null 则跳过 JPEG 保存
             it.gpuJpegProcessor = { rawShorts, w, h, blR, blG, blB, wl, wbR, wbG, wbB, ccm, cfa ->
