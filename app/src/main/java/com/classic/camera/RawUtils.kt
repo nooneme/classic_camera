@@ -39,8 +39,7 @@ fun parseBlackLevel(s: String): FloatArray {
     val g1 = nums.getOrNull(1) ?: r
     val g2 = nums.getOrNull(2) ?: g1
     val b = nums.getOrNull(3) ?: g2
-    // +2: 用户要求额外减 2 级黑电平，使暗部更深
-    return floatArrayOf(r + 2f, (g1 + g2) * 0.5f + 2f, b + 2f)
+    return floatArrayOf(r, (g1 + g2) * 0.5f, b)
 }
 
 fun mergeForwardMatrixToSRGB(forward: FloatArray): FloatArray {
