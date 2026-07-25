@@ -204,39 +204,6 @@ class RawPipeline : GLSurfaceView.Renderer {
     private var rcdBufW = 0
     private var rcdBufH = 0
 
-    // ---- RCD 后处理 Fragment Shader ----
-    private var progRcd = 0
-    private lateinit var uniRcd: RcdUniforms
-    private class RcdUniforms(val id: Int) {
-        var aPos = 0; var aTexCoord = 0
-        var uInputTex = 0
-        var uCCM = 0
-        var uAspectScale = 0; var uOrientation = 0; var uMirror = 0
-        var uToneMapD = 0; var uToneMapE = 0
-        var uToneCurveLUT = 0
-        var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0; var uLutIntensity = 0
-        var uLscGainTex = 0; var uLscGridSize = 0; var uEnableLsc = 0
-        fun lookup() {
-            aPos = GLES30.glGetAttribLocation(id, "aPos")
-            aTexCoord = GLES30.glGetAttribLocation(id, "aTexCoord")
-            uInputTex = GLES30.glGetUniformLocation(id, "uInputTex")
-            uCCM = GLES30.glGetUniformLocation(id, "uCCM")
-            uAspectScale = GLES30.glGetUniformLocation(id, "uAspectScale")
-            uOrientation = GLES30.glGetUniformLocation(id, "uOrientation")
-            uMirror = GLES30.glGetUniformLocation(id, "uMirror")
-            uToneMapD = GLES30.glGetUniformLocation(id, "uToneMapD")
-            uToneMapE = GLES30.glGetUniformLocation(id, "uToneMapE")
-            uToneCurveLUT = GLES30.glGetUniformLocation(id, "uToneCurveLUT")
-            uLutTex = GLES30.glGetUniformLocation(id, "uLutTexture")
-            uLutSizeLoc = GLES30.glGetUniformLocation(id, "uLutSize")
-            uEnableLut = GLES30.glGetUniformLocation(id, "uEnableLut")
-            uLutIntensity = GLES30.glGetUniformLocation(id, "uLutIntensity")
-            uLscGainTex = GLES30.glGetUniformLocation(id, "uLscGainTex")
-            uLscGridSize = GLES30.glGetUniformLocation(id, "uLscGridSize")
-            uEnableLsc = GLES30.glGetUniformLocation(id, "uEnableLsc")
-        }
-    }
-
     // ---- 黑电平扣除 Pass Uniforms ----
     private class BlSubUniforms(val id: Int) {
         var aPos = 0; var aTexCoord = 0
@@ -588,10 +555,6 @@ class RawPipeline : GLSurfaceView.Renderer {
         // RCD 计算管线初始化
         initRcd()
 
-        // RCD 后处理 Fragment Shader
-        progRcd = createProgram(VS, RCD_FRAGMENT_SHADER)
-        uniRcd = RcdUniforms(progRcd).also { it.lookup() }
-
         // GPU 多帧管线初始化（context 已就绪）
         onGluReady?.invoke()
     }
@@ -741,39 +704,6 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES31.glTexSubImage2D(GLES31.GL_TEXTURE_2D, 0, 0, 0, w, h, GLES31.GL_RED_INTEGER, GLES31.GL_UNSIGNED_SHORT, bb)
     }
 
-    private fun drawRcdToFbo() {
-        if (rcdOutTexId == 0 || captureFbo == 0) return
-        GLES31.glBindFramebuffer(GLES31.GL_FRAMEBUFFER, captureFbo)
-        GLES31.glViewport(0, 0, captureTexW, captureTexH)
-        GLES31.glClearColor(0f, 0f, 0f, 1f)
-        GLES31.glClear(GLES31.GL_COLOR_BUFFER_BIT)
-        GLES31.glUseProgram(progRcd)
-        GLES31.glUniform2f(uniRcd.uAspectScale, 1f, 1f)
-        GLES31.glUniform1i(uniRcd.uOrientation, orientation)
-        GLES31.glUniform1i(uniRcd.uMirror, if (mirror) 1 else 0)
-        GLES31.glActiveTexture(GLES31.GL_TEXTURE0)
-        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rcdOutTexId)
-        GLES31.glUniform1i(uniRcd.uInputTex, 0)
-        GLES31.glUniformMatrix3fv(uniRcd.uCCM, 1, false, ccm, 0)
-        GLES31.glUniform1f(uniRcd.uToneMapD, toneMapD)
-        GLES31.glUniform1f(uniRcd.uToneMapE, toneMapE)
-        GLES31.glActiveTexture(GLES31.GL_TEXTURE3)
-        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, toneCurveTexId)
-        GLES31.glUniform1i(uniRcd.uToneCurveLUT, 3)
-        GLES31.glActiveTexture(GLES31.GL_TEXTURE1)
-        GLES31.glBindTexture(GLES31.GL_TEXTURE_3D, lutTextureId)
-        GLES31.glUniform1i(uniRcd.uLutTex, 1)
-        GLES31.glUniform1f(uniRcd.uLutSizeLoc, 33.0f)
-        GLES31.glUniform1i(uniRcd.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
-        GLES31.glUniform1f(uniRcd.uLutIntensity, lutIntensity)
-        GLES31.glActiveTexture(GLES31.GL_TEXTURE2)
-        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, lscTexId)
-        GLES31.glUniform1i(uniRcd.uLscGainTex, 2)
-        GLES31.glUniform2f(uniRcd.uLscGridSize, lscGridCols.toFloat(), lscGridRows.toFloat())
-        GLES31.glUniform1i(uniRcd.uEnableLsc, if (lscGainMap != null) 1 else 0)
-        drawQuadRaw(uniRcd.aPos, uniRcd.aTexCoord)
-    }
-
     private fun dispatchRcd(w: Int, h: Int, cfa: Int, black: FloatArray, white: Float, wbGains: FloatArray) {
         if (!rcdEnabled) return
         ensureRcdBuffers(w, h)
@@ -875,42 +805,6 @@ class RawPipeline : GLSurfaceView.Renderer {
     }
 
     /** 用 RCD 输出纹理绘制（替代 BILINEAR_BODY 路径）。 */
-    private fun drawRcd(u: RcdUniforms) {
-        if (rcdOutTexId == 0) return
-        GLES31.glUseProgram(u.id)
-        val (ax, ay) = aspectScale()
-        GLES31.glUniform2f(u.uAspectScale, ax, ay)
-        GLES31.glUniform1i(u.uOrientation, orientation)
-        GLES31.glUniform1i(u.uMirror, if (mirror) 1 else 0)
-
-        GLES31.glActiveTexture(GLES31.GL_TEXTURE0)
-        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, rcdOutTexId)
-        GLES31.glUniform1i(u.uInputTex, 0)
-
-        GLES31.glUniformMatrix3fv(u.uCCM, 1, false, ccm, 0)
-        GLES31.glUniform1f(u.uToneMapD, toneMapD)
-        GLES31.glUniform1f(u.uToneMapE, toneMapE)
-
-        GLES31.glActiveTexture(GLES31.GL_TEXTURE3)
-        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, toneCurveTexId)
-        GLES31.glUniform1i(u.uToneCurveLUT, 3)
-
-        GLES31.glActiveTexture(GLES31.GL_TEXTURE1)
-        GLES31.glBindTexture(GLES31.GL_TEXTURE_3D, lutTextureId)
-        GLES31.glUniform1i(u.uLutTex, 1)
-        GLES31.glUniform1f(u.uLutSizeLoc, 33.0f)
-        GLES31.glUniform1i(u.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
-        GLES31.glUniform1f(u.uLutIntensity, lutIntensity)
-
-        GLES31.glActiveTexture(GLES31.GL_TEXTURE2)
-        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, lscTexId)
-        GLES31.glUniform1i(u.uLscGainTex, 2)
-        GLES31.glUniform2f(u.uLscGridSize, lscGridCols.toFloat(), lscGridRows.toFloat())
-        GLES31.glUniform1i(u.uEnableLsc, if (lscGainMap != null) 1 else 0)
-
-        drawQuadRaw(u.aPos, u.aTexCoord)
-    }
-
     private fun drawQuadRaw(aPos: Int, aTex: Int) {
         GLES31.glEnableVertexAttribArray(aPos)
         GLES31.glVertexAttribPointer(aPos, 2, GLES31.GL_FLOAT, false, 0, floatBuf(quadVerts))
@@ -1907,7 +1801,6 @@ class RawPipeline : GLSurfaceView.Renderer {
         if (rcdRawTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(rcdRawTexId), 0); rcdRawTexId = 0 }
         if (rcdOutTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(rcdOutTexId), 0); rcdOutTexId = 0 }
         if (rcdSsbo[0] != 0) { GLES31.glDeleteBuffers(9, rcdSsbo, 0); rcdSsbo.fill(0) }
-        if (progRcd != 0) { GLES30.glDeleteProgram(progRcd); progRcd = 0 }
         val progs = intArrayOf(rcdPopulateProg, rcdStep1Prog, rcdStep2Prog, rcdStep3Prog, rcdStep40Prog, rcdStep41Prog, rcdStep42Prog, rcdStep43Prog, rcdWriteProg)
         for (p in progs) if (p != 0) GLES30.glDeleteProgram(p)
         rcdPopulateProg = 0; rcdStep1Prog = 0; rcdStep2Prog = 0; rcdStep3Prog = 0
@@ -2237,59 +2130,6 @@ void main() {
                 vUV = vec2(1.0 - uv.y, uv.x);
             }
             gl_Position = vec4(aPos * uAspectScale, 0.0, 1.0);
-        }
-    """.trimIndent()
-
-    // ===== RCD 后处理 Fragment Shader =====
-    //
-    // 从 RCD 输出纹理采样 RGB → WB → CCM → 色调映射 → sRGB Gamma → LUT
-
-    private val RCD_FRAGMENT_SHADER = """
-        #version 300 es
-        precision highp float;
-        precision highp sampler3D;
-        uniform sampler2D uInputTex;
-        uniform mat3 uCCM;
-        uniform float uToneMapD;
-        uniform float uToneMapE;
-        uniform sampler2D uToneCurveLUT;
-        uniform highp sampler3D uLutTexture;
-        uniform float uLutSize;
-        uniform bool uEnableLut;
-        uniform float uLutIntensity;
-        uniform sampler2D uLscGainTex;
-        uniform vec2 uLscGridSize;
-        uniform bool uEnableLsc;
-        in vec2 vUV;
-        out vec4 frag;
-
-        vec3 applyLUT(vec3 color) {
-            vec3 coord = (color * (uLutSize - 1.0) + 0.5) / uLutSize;
-            return mix(color, texture(uLutTexture, coord).rgb, uLutIntensity);
-        }
-
-        vec3 applyToneCurve(vec3 color) {
-            float l = dot(color, vec3(0.2126, 0.7152, 0.0722));
-            float m = texture(uToneCurveLUT, vec2(l, 0.5)).r;
-            return color * (m / max(l, 0.001));
-        }
-
-        void main() {
-            vec3 rgb = texture(uInputTex, vUV).rgb;
-            if (uEnableLsc) {
-                vec2 tc = vec2((vUV.x * (uLscGridSize.x - 1.0) + 0.5) / uLscGridSize.x,
-                               (vUV.y * (uLscGridSize.y - 1.0) + 0.5) / uLscGridSize.y);
-                vec4 gain = texture(uLscGainTex, tc);
-                rgb *= vec3(gain.r, gain.g, gain.b);
-            }
-            rgb = uCCM * rgb;
-            rgb = max(rgb, 0.0);
-            const float a = 2.51, b = 0.03, c = 2.43;
-            rgb = rgb * (a * rgb + b) / (rgb * (c * rgb + uToneMapD) + uToneMapE);
-            rgb = applyToneCurve(rgb);
-            rgb = mix(12.92 * rgb, 1.055 * pow(rgb, vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), rgb));
-            if (uEnableLut) rgb = applyLUT(rgb);
-            frag = vec4(rgb, 1.0);
         }
     """.trimIndent()
 
