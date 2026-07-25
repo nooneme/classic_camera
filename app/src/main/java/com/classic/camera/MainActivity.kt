@@ -184,6 +184,7 @@ class MainActivity : AppCompatActivity() {
             pipeline?.whiteLevelOffset = it.getInt("white_level_offset", 0).toFloat()
             pipeline?.toneMapD = it.getFloat("tone_map_d", 0.59f)
             pipeline?.toneMapE = it.getFloat("tone_map_e", 0.14f)
+            pipeline?.highlightReconstructionEnabled = it.getBoolean("highlight_reconstruction", false)
         }
         // 加载色调曲线
         val savedCurve = ToneCurve.load(prefs)
@@ -566,6 +567,20 @@ class MainActivity : AppCompatActivity() {
         layout.addView(tvFrameCount)
         layout.addView(sbFrameCount)
 
+        // ---- 高光重建 ----
+        val hrEnabled = prefs.getBoolean("highlight_reconstruction", false)
+        val switchHr = Switch(this).apply {
+            isChecked = hrEnabled
+            text = "高光重建"
+            textSize = 16f
+            setPadding(48, 16, 48, 24)
+            setOnCheckedChangeListener { _, isChecked ->
+                prefs.edit().putBoolean("highlight_reconstruction", isChecked).apply()
+                glSurfaceView.queueEvent { pipeline?.highlightReconstructionEnabled = isChecked }
+            }
+        }
+        layout.addView(switchHr)
+
         // ---- 黑电平补偿 ----
         val tvBlOffset = TextView(this).apply {
             text = "黑电平补偿: ${blOffset}"
@@ -798,6 +813,10 @@ class MainActivity : AppCompatActivity() {
                 ToneCurve.save(prefs, defaultCurve)
                 val nativeArr = defaultCurve.toNativeArray()
                 glSurfaceView.queueEvent { pipeline?.setToneCurve(nativeArr) }
+                // 重置高光重建
+                switchHr.isChecked = false
+                prefs.edit().putBoolean("highlight_reconstruction", false).apply()
+                glSurfaceView.queueEvent { pipeline?.highlightReconstructionEnabled = false }
                 // 重置滤镜强度
                 sbLutIntensity.progress = 100
                 tvLutIntensity.text = "滤镜强度: 100%"
