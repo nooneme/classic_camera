@@ -68,11 +68,15 @@ class GpuAlignMerge {
     }
 
     fun init() {
+        // 先无条件释放：若上一轮 GL 上下文已被销毁，frameTex/pyrTex/outSSBO 等都是
+        // 失效名字；如果 checkSupport() 在这种瞬态下误判返回 false，又没有 release，
+        // initialized 会保留 true 导致 process() 沿用失效名字 → texelFetch 全 0 → 黑屏。
+        // 即使 checkSupport 失败此处的释放也保证 initialized=false、资源名清零。
+        releaseGL()
         if (!checkSupport()) {
             Log.w(TAG, "ES 3.1 not supported, GPU fallback")
             return
         }
-        initialized = true
         initGL()
     }
 
