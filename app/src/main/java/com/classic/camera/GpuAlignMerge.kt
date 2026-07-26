@@ -37,6 +37,8 @@ class GpuAlignMerge {
 
     private val frameTex = IntArray(MAX_FRAMES)
     private val pyrTex = IntArray(MAX_FRAMES * 3)
+    private val pyrTexW = IntArray(MAX_FRAMES * 3)
+    private val pyrTexH = IntArray(MAX_FRAMES * 3)
     private var fbo = 0
     private var weightSSBO = 0
     private var level0SSBO = 0
@@ -107,6 +109,7 @@ class GpuAlignMerge {
     fun releaseGL() {
         if (frameTex[0] != 0) { GLES30.glDeleteTextures(MAX_FRAMES, frameTex, 0); frameTex.fill(0) }
         if (pyrTex[0] != 0) { GLES30.glDeleteTextures(MAX_FRAMES * 3, pyrTex, 0); pyrTex.fill(0) }
+        pyrTexW.fill(0); pyrTexH.fill(0)
         if (fbo != 0) { GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0); fbo = 0 }
         if (level0SSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(level0SSBO), 0); level0SSBO = 0 }
         if (level1SSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(level1SSBO), 0); level1SSBO = 0 }
@@ -211,9 +214,9 @@ class GpuAlignMerge {
         val pyrW2 = (pyrW1 + 3) / 4; val pyrH2 = (pyrH1 + 3) / 4
 
         for (f in 0 until nf) {
-            initTex(pyrTex[pt(f, 0)], pyrW0, pyrH0)
-            initTex(pyrTex[pt(f, 1)], pyrW1, pyrH1)
-            initTex(pyrTex[pt(f, 2)], pyrW2, pyrH2)
+            initTex(pyrTex[pt(f, 0)], pyrW0, pyrH0, pt(f, 0))
+            initTex(pyrTex[pt(f, 1)], pyrW1, pyrH1, pt(f, 1))
+            initTex(pyrTex[pt(f, 2)], pyrW2, pyrH2, pt(f, 2))
         }
         val ntx0 = (pyrW0 + 15) / 16; val nty0 = (pyrH0 + 15) / 16
         val ntx1 = (pyrW1 + 15) / 16; val nty1 = (pyrH1 + 15) / 16
@@ -426,13 +429,23 @@ class GpuAlignMerge {
 
     private fun pt(f: Int, l: Int) = f * 3 + l
 
-    private fun initTex(tex: Int, tw: Int, th: Int) {
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, tex)
+    private fun initTex(texId: Int, tw: Int, th: Int, idx: Int) {
+        if (pyrTexW[idx] == tw && pyrTexH[idx] == th) return
+        if (pyrTexW[idx] != 0) {
+            GLES30.glDeleteTextures(1, intArrayOf(texId), 0)
+            val newId = IntArray(1)
+            GLES30.glGenTextures(1, newId, 0)
+            pyrTex[idx] = newId[0]
+        }
+        val actualId = pyrTex[idx]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, actualId)
         GLES30.glTexStorage2D(GLES30.GL_TEXTURE_2D, 1, GLES30.GL_RGBA8, tw, th)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        pyrTexW[idx] = tw
+        pyrTexH[idx] = th
     }
 
     private fun ensureSSBO(idRef: kotlin.reflect.KMutableProperty0<Int>, minBytes: Int) {

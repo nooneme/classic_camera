@@ -134,6 +134,9 @@ class CameraController(
     /** 对焦状态被取消时回调（MainActivity 借此隐藏对焦框） */
     var onFocusReset: (() -> Unit)? = null
 
+    /** 当前正在等待的拍照 latch（onPause 时释放，避免 bgHandler 死锁）。 */
+    @Volatile var pendingCaptureLatch: CountDownLatch? = null
+
     /** 打开镜头并开始 RAW repeating 预览（RAW 当 preview target）。 */
     fun open(lens: LensInfo) {
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
@@ -174,6 +177,8 @@ class CameraController(
     /** 关掉当前轮所占的 session/device/reader，但不递增序列号（close 时另递增）。 */
     private fun teardownInternal() {
         try {
+            pendingCaptureLatch?.countDown()
+            pendingCaptureLatch = null
             session?.close(); session = null
             cameraDevice?.close(); cameraDevice = null
             rawReader?.close(); rawReader = null
@@ -632,6 +637,8 @@ class CameraController(
         multiFrameRefImage = null
 
         bgHandler.post {
+            var dngName = ""
+            var jpgName = ""
             try {
                 val numTx = (w + 16 - 1) / 16
                 val numTy = (h + 16 - 1) / 16
@@ -645,7 +652,6 @@ class CameraController(
                 Log.d(LOG_TAG, String.format("multiFrame: GPU path took %.1fms (result %d shorts)",
                     (tGpuDone - tAlignStart) / 1_000_000.0, merged.size))
 
-                // === 复用单帧 gpuJpegProcessor 渲染 Bitmap ===
                 val lens = currentLens
                 val bl = captureSnapshotBlackLevel ?: parseBlackLevel(lens?.blackLevelPattern ?: "") ?: floatArrayOf(0f, 0f, 0f)
                 val jpegWl = captureSnapshotWhiteLevel ?: (lens?.whiteLevel?.toFloat() ?: 1023f)
@@ -658,7 +664,6 @@ class CameraController(
                 val cfa = lens?.colorFilterArrangement ?: 2
 
                 val processor = gpuJpegProcessor
-                var jpgName = ""
                 if (processor != null) {
                     val tJpegStart = System.nanoTime()
                     val bitmap = processor(merged, w, h,
@@ -687,15 +692,12 @@ class CameraController(
                     }
                 }
 
-                // === DNG（复用 writeDng） ===
-                var dngName = ""
                 if (saveDng && refImage != null && captureCharacteristics != null && lastRepeatingResult != null) {
                     val tDngStart = System.nanoTime()
                     dngName = writeDng(captureCharacteristics!!, lastRepeatingResult!!, refImage, lens)
                     Log.d(LOG_TAG, String.format("multiFrame: DNG saved in %.1fms",
                         (System.nanoTime() - tDngStart) / 1_000_000.0))
                 }
-                refImage?.close()
 
                 val tDone = System.nanoTime()
                 Log.d(LOG_TAG, String.format("multiFrame: total processing %.1fms (frame accumulation to save done)",
@@ -704,10 +706,12 @@ class CameraController(
                 mainHandler.post {
                     cb(dngName, jpgName)
                 }
-                resetFocus()
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "multiFrame GPU path failed", e)
-                throw e
+            } finally {
+                refImage?.close()
+                multiFrameBuffers.clear()
+                resetFocus()
             }
         }
     }

@@ -43,7 +43,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -1089,6 +1088,7 @@ class MainActivity : AppCompatActivity() {
             it.gpuJpegProcessor = { rawShorts, w, h, blR, blG, blB, wl, wbR, wbG, wbB, ccm, cfa ->
                 val latch = CountDownLatch(1)
                 var bitmap: Bitmap? = null
+                it.pendingCaptureLatch = latch
                 glSurfaceView.queueEvent {
                     try {
                         bitmap = pipeline?.renderCaptureToBitmap(
@@ -1103,9 +1103,8 @@ class MainActivity : AppCompatActivity() {
                     }
                     latch.countDown()
                 }
-                if (!latch.await(5, TimeUnit.SECONDS)) {
-                    Log.e(LOG_TAG, "GPU JPEG render timed out (5s)")
-                }
+                latch.await()
+                it.pendingCaptureLatch = null
                 bitmap // may be null → writeJpeg 跳过 JPEG 保存
             }
             // GPU 多帧融合处理器（在 GL 线程运行，CountDownLatch 同步）
@@ -1115,6 +1114,7 @@ class MainActivity : AppCompatActivity() {
                     val latch = CountDownLatch(1)
                     var result: ShortArray? = null
                     var error: Exception? = null
+                    it.pendingCaptureLatch = latch
                     glSurfaceView.queueEvent {
                         try {
                             result = aligner.process(frames, w, h, numTx, numTy, wl)
@@ -1124,7 +1124,8 @@ class MainActivity : AppCompatActivity() {
                         }
                         latch.countDown()
                     }
-                    latch.await(15, TimeUnit.SECONDS)
+                    latch.await()
+                    it.pendingCaptureLatch = null
                     if (error != null) throw RuntimeException("GPU multi-frame failed", error)
                     result!!
                 }
@@ -1394,8 +1395,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        cameraController?.close()
+        cameraController = null
         glSurfaceView.onPause()
-        cameraController?.pausePreview()
         captureVibHandler.removeCallbacksAndMessages(null)
         captureVibRunning = false
     }
@@ -1403,7 +1405,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         glSurfaceView.onResume()
-        cameraController?.resumePreview()
+        selectedLens?.let { selectLens(it) }
         loadLutList()
     }
 

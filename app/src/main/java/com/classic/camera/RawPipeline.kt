@@ -518,7 +518,8 @@ class RawPipeline : GLSurfaceView.Renderer {
         // RCD 计算管线初始化
         initRcd()
 
-        // 高光重建引擎初始化
+        // 高光重建引擎初始化（先 release 确保 GL 上下文重建后能重新初始化）
+        hrEngine.release()
         hrEngine.init()
 
         // GPU 多帧管线初始化（context 已就绪）
@@ -953,38 +954,8 @@ class RawPipeline : GLSurfaceView.Renderer {
 
         drawQuadRaw(uniCcm.aPos, uniCcm.aTexCoord)
 
-        // ---- Pass 5.5: 降采样 + 高光重建（可选）+ 上采样 ----
-        val toneMapInputTexId: Int
-        val dsW = (w / 4).coerceAtLeast(1); val dsH = (h / 4).coerceAtLeast(1)
-        ensureDsBufFbo(dsW, dsH)
-        // 降采样到 1/4
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, dsBufFbo)
-        GLES30.glViewport(0, 0, dsW, dsH)
-        GLES30.glClearColor(0f, 0f, 0f, 1f)
-        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-        GLES30.glUseProgram(progBlit)
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, ccmBufTexId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(progBlit, "uTexture"), 0)
-        drawQuadBlit()
-        // 可选高光重建
-        val upSampleInputTexId = if (highlightReconstructionEnabled) {
-            hrEngine.render(dsBufTexId, dsW, dsH)
-        } else {
-            dsBufTexId
-        }
-        // 上采样回全分辨率
-        ensureUsBufFbo(w, h)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, usBufFbo)
-        GLES30.glViewport(0, 0, w, h)
-        GLES30.glClearColor(0f, 0f, 0f, 1f)
-        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-        GLES30.glUseProgram(progBlit)
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, upSampleInputTexId)
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(progBlit, "uTexture"), 0)
-        drawQuadBlit()
-        toneMapInputTexId = usBufTexId
+        // ---- Pass 5.5: 跳过降采样/高光重建/上采样（预览省电）----
+        val toneMapInputTexId = ccmBufTexId
 
         // ---- Pass 6: Reinhard 色调映射（全分辨率 → RGBA8）----
         ensureToneMapBufFbo(w, h)
