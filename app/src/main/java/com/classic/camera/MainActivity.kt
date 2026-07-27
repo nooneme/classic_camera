@@ -67,6 +67,7 @@ class MainActivity : AppCompatActivity() {
 
     private var pipeline: RawPipeline? = null
     private var gpuAlignMerge: GpuAlignMerge? = null
+    private var lastAppliedPreviewAspect: Float = 0f
 
     // Camera2 相关
     private lateinit var cameraManager: CameraManager
@@ -1080,6 +1081,20 @@ class MainActivity : AppCompatActivity() {
         android.util.Log.d("ClassicCamera", sb.toString())
     }
 
+    private fun applyPreviewAspect(imageAspect: Float) {
+        val p = pipeline ?: return
+        if (p.rawW <= 0 || p.rawH <= 0) return
+        val container = glSurfaceView.parent as? View ?: return
+        val width = container.width
+        if (width <= 0) return
+        val lp = container.layoutParams
+        val targetHeight = (width / imageAspect).toInt().coerceAtLeast(1)
+        if (lp.height != targetHeight) {
+            lp.height = targetHeight
+            container.layoutParams = lp
+        }
+    }
+
     /** 用当前选中镜头打开 RAW 预览。 */
     private fun openSelectedLensPreview() {
         val lens = selectedLens ?: return
@@ -1162,6 +1177,13 @@ class MainActivity : AppCompatActivity() {
             if (p != null) {
                 p.rawBuffer = buf
                 p.rawW = w; p.rawH = h
+                val rotated = (p.orientation == 90 || p.orientation == 270)
+                val imageAspect = if (rotated) h.toFloat() / w.toFloat()
+                                  else w.toFloat() / h.toFloat()
+                if (imageAspect > 0f && imageAspect != lastAppliedPreviewAspect) {
+                    lastAppliedPreviewAspect = imageAspect
+                    runOnUiThread { applyPreviewAspect(imageAspect) }
+                }
                 val gains = colorTempGains
                 p.wbR = wbR * gains[0]; p.wbG = wbG * gains[1]; p.wbB = wbB * gains[2]
                 // 动态黑/白电平（null = 帧级数据尚未到达，保持 applyLensParams 设置的静态值）

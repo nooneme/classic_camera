@@ -7,9 +7,9 @@
 
     <!-- 预览区：GLSurfaceView + 对焦指示器叠加层 -->
     <FrameLayout
+        android:id="@+id/previewContainer"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="240dp"
         android:layout_marginTop="60dp">
 
         <android.opengl.GLSurfaceView
@@ -265,5 +265,11 @@
             android:paddingVertical="2dp"
             android:paddingHorizontal="6dp" />
     </HorizontalScrollView>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#000000" />
 
 </LinearLayout>
