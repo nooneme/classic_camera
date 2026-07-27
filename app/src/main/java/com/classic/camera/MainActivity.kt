@@ -91,6 +91,10 @@ class MainActivity : AppCompatActivity() {
     private var settingsDialogOriginalBg: android.graphics.drawable.Drawable? = null
     private val settingsLayoutChildren = mutableListOf<android.view.View>()
 
+    private var colorTempKelvin = 6500
+    private var colorTint = 0
+    private var colorTempGains = floatArrayOf(1f, 1f, 1f)
+
     private var currentFilterPath: String = ""
         set(value) {
             field = value
@@ -184,7 +188,10 @@ class MainActivity : AppCompatActivity() {
             pipeline?.toneMapD = it.getFloat("tone_map_d", 0.59f)
             pipeline?.toneMapE = it.getFloat("tone_map_e", 0.14f)
             pipeline?.highlightReconstructionEnabled = it.getBoolean("highlight_reconstruction", false)
+            colorTempKelvin = it.getInt("color_temp_kelvin", 6500)
+            colorTint = it.getInt("color_tint", 0)
         }
+        updateColorTempGains()
         // 加载色调曲线
         val savedCurve = ToneCurve.load(prefs)
         val toneCurveNativeArray = savedCurve.toNativeArray()
@@ -485,6 +492,10 @@ class MainActivity : AppCompatActivity() {
     /** SharedPreferences 文件名 */
     private val PREFS_NAME = "camera_settings"
 
+    private fun updateColorTempGains() {
+        colorTempGains = kelvinToWbGains(colorTempKelvin, colorTint)
+    }
+
     /** 显示设置弹窗。 */
     private fun showSettingsDialog() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -504,7 +515,6 @@ class MainActivity : AppCompatActivity() {
         val saveDng = prefs.getBoolean("save_dng", false)
         val multiFrame = prefs.getBoolean("multi_frame", false)
         val multiFrameCount = prefs.getInt("multi_frame_count", 4)
-        val blOffset = prefs.getInt("black_level_offset", 0)
         val wlOffset = prefs.getInt("white_level_offset", 0)
 
         val switchDng = Switch(this).apply {
@@ -580,35 +590,6 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(switchHr)
 
-        // ---- 黑电平补偿 ----
-        val tvBlOffset = TextView(this).apply {
-            text = "黑电平补偿: ${blOffset}"
-            textSize = 15f
-            setPadding(48, 16, 48, 4)
-        }
-        val sbBlOffset = SeekBar(this).apply {
-            max = 64
-            progress = (blOffset + 32).coerceIn(0, 64)
-            setPadding(48, 0, 48, 16)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    val offset = progress - 32
-                    tvBlOffset.text = "黑电平补偿: ${if (offset >= 0) "+$offset" else "$offset"}"
-                    glSurfaceView.queueEvent { pipeline?.blackLevelOffset = offset.toFloat() }
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {
-                    val offset = seekBar.progress - 32
-                    glSurfaceView.queueEvent { pipeline?.blackLevelOffset = offset.toFloat() }
-                    showToneMapPreview(tvBlOffset, seekBar)
-                }
-                override fun onStopTrackingTouch(seekBar: SeekBar) {
-                    val offset = seekBar.progress - 32
-                    prefs.edit().putInt("black_level_offset", offset).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-
         // ---- 白电平补偿 ----
         val tvWlOffset = TextView(this).apply {
             text = "白电平补偿: ${wlOffset}"
@@ -638,14 +619,11 @@ class MainActivity : AppCompatActivity() {
             })
         }
 
-        layout.addView(tvBlOffset)
-        layout.addView(sbBlOffset)
         layout.addView(tvWlOffset)
         layout.addView(sbWlOffset)
 
         // ---- 色调映射 D（分母一次项系数） ----
         val toneMapD = prefs.getFloat("tone_map_d", 0.59f)
-        val toneMapE = prefs.getFloat("tone_map_e", 0.14f)
         val tvToneMapD = TextView(this).apply {
             text = "色调 D（默认0.59）: ${"%.2f".format(toneMapD)}"
             textSize = 15f
@@ -674,39 +652,8 @@ class MainActivity : AppCompatActivity() {
             })
         }
 
-        // ---- 色调映射 E（分母常数项系数） ----
-        val tvToneMapE = TextView(this).apply {
-            text = "色调 E（默认0.14）: ${"%.2f".format(toneMapE)}"
-            textSize = 15f
-            setPadding(48, 8, 48, 4)
-        }
-        val sbToneMapE = SeekBar(this).apply {
-            max = 40
-            progress = ((toneMapE - 0.1f) * 100).roundToInt().coerceIn(0, 40)
-            setPadding(48, 0, 48, 16)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    val v = 0.1f + progress / 100f
-                    tvToneMapE.text = "色调 E（默认0.14）: ${"%.2f".format(v)}"
-                    glSurfaceView.queueEvent { pipeline?.toneMapE = v }
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {
-                    val v = 0.1f + seekBar.progress / 100f
-                    glSurfaceView.queueEvent { pipeline?.toneMapE = v }
-                    showToneMapPreview(tvToneMapE, seekBar)
-                }
-                override fun onStopTrackingTouch(seekBar: SeekBar) {
-                    val v = 0.1f + seekBar.progress / 100f
-                    prefs.edit().putFloat("tone_map_e", v).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-
         layout.addView(tvToneMapD)
         layout.addView(sbToneMapD)
-        layout.addView(tvToneMapE)
-        layout.addView(sbToneMapE)
 
         // ---- 色调曲线编辑器（直接嵌入弹窗） ----
         val curveH = (200 * resources.displayMetrics.density).toInt()
@@ -777,6 +724,71 @@ class MainActivity : AppCompatActivity() {
         layout.addView(tvLutIntensity)
         layout.addView(sbLutIntensity)
 
+        // ---- 色温(Kelvin) ----
+        val tvColorTemp = TextView(this).apply {
+            text = "色温: ${colorTempKelvin}K"
+            textSize = 15f
+            setPadding(48, 16, 48, 4)
+        }
+        val sbColorTemp = SeekBar(this).apply {
+            max = 130
+            progress = ((colorTempKelvin - 2000) / 100).coerceIn(0, 130)
+            setPadding(48, 0, 48, 16)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    colorTempKelvin = 2000 + progress * 100
+                    tvColorTemp.text = "色温: ${colorTempKelvin}K"
+                    updateColorTempGains()
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {
+                    colorTempKelvin = 2000 + seekBar.progress * 100
+                    updateColorTempGains()
+                    showToneMapPreview(tvColorTemp, seekBar)
+                }
+                override fun onStopTrackingTouch(seekBar: SeekBar) {
+                    colorTempKelvin = 2000 + seekBar.progress * 100
+                    updateColorTempGains()
+                    prefs.edit().putInt("color_temp_kelvin", colorTempKelvin).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+
+        // ---- 色调(Tint) ----
+        val tvColorTint = TextView(this).apply {
+            text = "色调: ${colorTint}"
+            textSize = 15f
+            setPadding(48, 8, 48, 4)
+        }
+        val sbColorTint = SeekBar(this).apply {
+            max = 200
+            progress = (colorTint + 100).coerceIn(0, 200)
+            setPadding(48, 0, 48, 16)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    colorTint = progress - 100
+                    tvColorTint.text = "色调: ${if (colorTint >= 0) "+$colorTint" else "$colorTint"}"
+                    updateColorTempGains()
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {
+                    colorTint = seekBar.progress - 100
+                    updateColorTempGains()
+                    showToneMapPreview(tvColorTint, seekBar)
+                }
+                override fun onStopTrackingTouch(seekBar: SeekBar) {
+                    colorTint = seekBar.progress - 100
+                    updateColorTempGains()
+                    prefs.edit().putInt("color_tint", colorTint).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+
+        layout.addView(tvColorTemp)
+        layout.addView(sbColorTemp)
+        layout.addView(tvColorTint)
+        layout.addView(sbColorTint)
+
         val btnReset = Button(this).apply {
             text = "恢复默认"
             isAllCaps = false
@@ -790,10 +802,6 @@ class MainActivity : AppCompatActivity() {
                 sbFrameCount.visibility = android.view.View.GONE
                 tvFrameCount.visibility = android.view.View.GONE
                 applyMultiFrame(false, 0)
-                sbBlOffset.progress = 32
-                tvBlOffset.text = "黑电平补偿: 0"
-                glSurfaceView.queueEvent { pipeline?.blackLevelOffset = 0f }
-                prefs.edit().putInt("black_level_offset", 0).apply()
                 sbWlOffset.progress = 256
                 tvWlOffset.text = "白电平补偿: 0"
                 glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = 0f }
@@ -802,10 +810,6 @@ class MainActivity : AppCompatActivity() {
                 tvToneMapD.text = "色调 D（默认0.59）: 0.59"
                 glSurfaceView.queueEvent { pipeline?.toneMapD = 0.59f }
                 prefs.edit().putFloat("tone_map_d", 0.59f).apply()
-                sbToneMapE.progress = 4
-                tvToneMapE.text = "色调 E（默认0.14）: 0.14"
-                glSurfaceView.queueEvent { pipeline?.toneMapE = 0.14f }
-                prefs.edit().putFloat("tone_map_e", 0.14f).apply()
                 // 重置色调曲线为 y=x
                 curveView.resetCurve()
                 val defaultCurve = ToneCurve()
@@ -821,6 +825,16 @@ class MainActivity : AppCompatActivity() {
                 tvLutIntensity.text = "滤镜强度: 100%"
                 glSurfaceView.queueEvent { pipeline?.lutIntensity = 1f }
                 prefs.edit().putFloat("lut_intensity", 1f).apply()
+                // 重置色温/色调
+                sbColorTemp.progress = 45
+                colorTempKelvin = 6500
+                tvColorTemp.text = "色温: 6500K"
+                sbColorTint.progress = 100
+                colorTint = 0
+                tvColorTint.text = "色调: 0"
+                updateColorTempGains()
+                prefs.edit().putInt("color_temp_kelvin", 6500).apply()
+                prefs.edit().putInt("color_tint", 0).apply()
             }
         }
         layout.addView(btnReset)
@@ -1088,12 +1102,13 @@ class MainActivity : AppCompatActivity() {
             it.gpuJpegProcessor = { rawShorts, w, h, blR, blG, blB, wl, wbR, wbG, wbB, ccm, cfa ->
                 val latch = CountDownLatch(1)
                 var bitmap: Bitmap? = null
+                val gains = colorTempGains
                 it.pendingCaptureLatch = latch
                 glSurfaceView.queueEvent {
                     try {
                         bitmap = pipeline?.renderCaptureToBitmap(
                             rawShorts, w, h, blR, blG, blB, wl,
-                            wbR, wbG, wbB, ccm, cfa
+                            wbR * gains[0], wbG * gains[1], wbB * gains[2], ccm, cfa
                         )
                         if (bitmap == null) {
                             Log.w(LOG_TAG, "GPU JPEG: pipeline returned null")
@@ -1147,7 +1162,8 @@ class MainActivity : AppCompatActivity() {
             if (p != null) {
                 p.rawBuffer = buf
                 p.rawW = w; p.rawH = h
-                p.wbR = wbR; p.wbG = wbG; p.wbB = wbB
+                val gains = colorTempGains
+                p.wbR = wbR * gains[0]; p.wbG = wbG * gains[1]; p.wbB = wbB * gains[2]
                 // 动态黑/白电平（null = 帧级数据尚未到达，保持 applyLensParams 设置的静态值）
                 if (blR != null && blG != null && blB != null) {
                     p.blackLevelR = blR; p.blackLevelG = blG; p.blackLevelB = blB
