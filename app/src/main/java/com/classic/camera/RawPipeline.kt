@@ -148,6 +148,14 @@ class RawPipeline : GLSurfaceView.Renderer {
     private var lscTexId = 0
     private var lastGainMapRef: FloatArray? = null
 
+    // ---- Bayer 降采样预览 Pass ----
+    @Volatile var bayerDsScale = 2
+    private var progBayerDs = 0
+    private var bayerDsBufFbo = 0
+    private var bayerDsBufTexId = 0
+    private var bayerDsBufW = 0
+    private var bayerDsBufH = 0
+
     // ---- RCD 计算管线 ----
     private var rcdInitialized = false
     private var rcdEnabled = false
@@ -185,6 +193,25 @@ class RawPipeline : GLSurfaceView.Renderer {
     }
 
     private lateinit var uniBlSub: BlSubUniforms
+
+    // ---- Bayer 降采样 Pass Uniforms ----
+    private class BayerDsUniforms(val id: Int) {
+        var aPos = 0; var aTexCoord = 0
+        var uRawTex = 0; var uCfaPattern = 0
+        var uAspectScale = 0; var uOrientation = 0; var uMirror = 0
+
+        fun lookup() {
+            aPos = GLES30.glGetAttribLocation(id, "aPos")
+            aTexCoord = GLES30.glGetAttribLocation(id, "aTexCoord")
+            uRawTex = GLES30.glGetUniformLocation(id, "uRawTex")
+            uCfaPattern = GLES30.glGetUniformLocation(id, "uCfaPattern")
+            uAspectScale = GLES30.glGetUniformLocation(id, "uAspectScale")
+            uOrientation = GLES30.glGetUniformLocation(id, "uOrientation")
+            uMirror = GLES30.glGetUniformLocation(id, "uMirror")
+        }
+    }
+
+    private lateinit var uniBayerDs: BayerDsUniforms
 
     // ---- LSC 增益 Pass Uniforms ----
     private class LscUniforms(val id: Int) {
@@ -429,6 +456,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         gammaBufFbo = 0; gammaBufTexId = 0; gammaBufW = 0; gammaBufH = 0
         dsBufFbo = 0; dsBufTexId = 0; dsBufW = 0; dsBufH = 0
         usBufFbo = 0; usBufTexId = 0; usBufW = 0; usBufH = 0
+        bayerDsBufFbo = 0; bayerDsBufTexId = 0; bayerDsBufW = 0; bayerDsBufH = 0
 
         progBlit = createProgram(BLIT_VS, BLIT_FS)
 
@@ -440,6 +468,9 @@ class RawPipeline : GLSurfaceView.Renderer {
 
         progLscRgb = createProgram(VS, LSC_RGB_FS)
         uniLscRgb = LscRgbUniforms(progLscRgb).also { it.lookup() }
+
+        progBayerDs = createProgram(VS, BAYER_DS_FS)
+        uniBayerDs = BayerDsUniforms(progBayerDs).also { it.lookup() }
 
         progCfaReorder = createProgram(VS, CFA_REORDER_FS)
         uniCfa = CfaUniforms(progCfaReorder).also { it.lookup() }
@@ -796,8 +827,31 @@ class RawPipeline : GLSurfaceView.Renderer {
             if (!uploadRaw(data)) return
         }
 
-        // ---- Pass 0: CFA 重排（任意排列 → RGGB）----
-        val w = rawW; val h = rawH
+        // ---- Bayer 降采样预览 Pass ----
+        val dsW = (rawW / bayerDsScale).coerceAtLeast(2)
+        val dsH = (rawH / bayerDsScale).coerceAtLeast(2)
+        val inv65535 = 1.0f / 65535.0f
+
+        ensureBayerDsFbo(dsW, dsH)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, bayerDsBufFbo)
+        GLES30.glViewport(0, 0, dsW, dsH)
+        GLES30.glClearColor(0f, 0f, 0f, 1f)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+
+        GLES30.glUseProgram(progBayerDs)
+        GLES30.glUniform2f(uniBayerDs.uAspectScale, 1f, 1f)
+        GLES30.glUniform1i(uniBayerDs.uOrientation, 0)
+        GLES30.glUniform1i(uniBayerDs.uMirror, 0)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texId)
+        GLES30.glUniform1i(uniBayerDs.uRawTex, 0)
+        GLES30.glUniform1i(uniBayerDs.uCfaPattern, cfaType)
+        drawQuadRaw(uniBayerDs.aPos, uniBayerDs.aTexCoord)
+
+        // 后续 Pass 全部用降采样尺寸
+        val w = dsW; val h = dsH
+
+        // ---- Pass 0: CFA 重排（降采样→降采样）----
         val pipelineInputTexId: Int
         if (cfaType != 0) {
             ensureCfaBufFbo(w, h)
@@ -812,14 +866,14 @@ class RawPipeline : GLSurfaceView.Renderer {
             GLES30.glUniform1i(uniCfa.uMirror, 0)
 
             GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texId)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, bayerDsBufTexId)
             GLES30.glUniform1i(uniCfa.uInputTex, 0)
             GLES30.glUniform1i(uniCfa.uCfaPattern, cfaType)
 
             drawQuadRaw(uniCfa.aPos, uniCfa.aTexCoord)
             pipelineInputTexId = cfaBufTexId
         } else {
-            pipelineInputTexId = texId
+            pipelineInputTexId = bayerDsBufTexId
         }
 
         // ---- Pass 1: 黑电平扣除（全分辨率 1:1，无旋转/镜像）----
@@ -838,7 +892,6 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pipelineInputTexId)
         GLES30.glUniform1i(uniBlSub.uRawTex, 0)
 
-        val inv65535 = 1.0f / 65535.0f
         GLES30.glUniform3f(uniBlSub.uBlackLevel,
             (blackLevelR + blackLevelOffset) * inv65535,
             (blackLevelG + blackLevelOffset) * inv65535,
@@ -1070,6 +1123,35 @@ class RawPipeline : GLSurfaceView.Renderer {
             throw RuntimeException("BL FBO incomplete")
         }
         blTexW = w; blTexH = h
+    }
+
+    // ====================== Bayer 降采样中间 FBO ======================
+
+    private fun ensureBayerDsFbo(w: Int, h: Int) {
+        if (bayerDsBufTexId != 0 && bayerDsBufW == w && bayerDsBufH == h) return
+        if (bayerDsBufTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(bayerDsBufTexId), 0); bayerDsBufTexId = 0 }
+        if (bayerDsBufFbo != 0) { GLES30.glDeleteFramebuffers(1, intArrayOf(bayerDsBufFbo), 0); bayerDsBufFbo = 0 }
+        bayerDsBufW = 0; bayerDsBufH = 0
+
+        val texs = IntArray(1)
+        GLES30.glGenTextures(1, texs, 0)
+        bayerDsBufTexId = texs[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, bayerDsBufTexId)
+        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GL_R16F, w, h, 0, GLES30.GL_RED, GLES30.GL_HALF_FLOAT, null)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+
+        val fbos = IntArray(1)
+        GLES30.glGenFramebuffers(1, fbos, 0)
+        bayerDsBufFbo = fbos[0]
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, bayerDsBufFbo)
+        GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, bayerDsBufTexId, 0)
+        if (GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) != GLES30.GL_FRAMEBUFFER_COMPLETE) {
+            throw RuntimeException("Bayer DS FBO incomplete")
+        }
+        bayerDsBufW = w; bayerDsBufH = h
     }
 
     // ====================== LSC 增益中间 FBO ======================
@@ -1724,6 +1806,9 @@ class RawPipeline : GLSurfaceView.Renderer {
         if (blTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(blTexId), 0); blTexId = 0 }
         if (blFbo != 0) { GLES30.glDeleteFramebuffers(1, intArrayOf(blFbo), 0); blFbo = 0 }
         if (progBlSub != 0) { GLES30.glDeleteProgram(progBlSub); progBlSub = 0 }
+        if (bayerDsBufTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(bayerDsBufTexId), 0); bayerDsBufTexId = 0 }
+        if (bayerDsBufFbo != 0) { GLES30.glDeleteFramebuffers(1, intArrayOf(bayerDsBufFbo), 0); bayerDsBufFbo = 0 }
+        if (progBayerDs != 0) { GLES30.glDeleteProgram(progBayerDs); progBayerDs = 0 }
         if (lscBufTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(lscBufTexId), 0); lscBufTexId = 0 }
         if (lscBufFbo != 0) { GLES30.glDeleteFramebuffers(1, intArrayOf(lscBufFbo), 0); lscBufFbo = 0 }
         if (progLsc != 0) { GLES30.glDeleteProgram(progLsc); progLsc = 0 }
@@ -2146,6 +2231,48 @@ void main() {
         rgb *= vec3(gain.r, gain.g, gain.b);
     }
     frag = vec4(rgb, 1.0);
+}
+""".trimIndent()
+
+    // ===== Bayer 降采样 Fragment Shader =====
+    private val BAYER_DS_FS = """
+#version 300 es
+precision highp float;
+uniform highp sampler2D uRawTex;
+uniform int uCfaPattern;
+in vec2 vUV;
+out vec4 frag;
+
+int ch(int x, int y) {
+    if (uCfaPattern == 0) {
+        return ((y & 1) == 0) ? (((x & 1) == 0) ? 0 : 1) : (((x & 1) == 0) ? 1 : 2);
+    } else if (uCfaPattern == 1) {
+        return ((y & 1) == 0) ? (((x & 1) == 0) ? 1 : 0) : (((x & 1) == 0) ? 2 : 1);
+    } else if (uCfaPattern == 2) {
+        return ((y & 1) == 0) ? (((x & 1) == 0) ? 1 : 2) : (((x & 1) == 0) ? 0 : 1);
+    } else {
+        return ((y & 1) == 0) ? (((x & 1) == 0) ? 2 : 1) : (((x & 1) == 0) ? 1 : 0);
+    }
+}
+
+void main() {
+    ivec2 inSz = textureSize(uRawTex, 0);
+    ivec2 outPos = ivec2(floor(vUV * vec2(inSz) / 2.0));
+    int baseX = outPos.x * 2;
+    int baseY = outPos.y * 2;
+    int targetCh = ch(outPos.x, outPos.y);
+
+    float sum = 0.0;
+    int count = 0;
+    int c;
+
+    c = ch(baseX, baseY); if (c == targetCh) { sum += texelFetch(uRawTex, ivec2(baseX, baseY), 0).r; count++; }
+    c = ch(baseX + 1, baseY); if (c == targetCh) { sum += texelFetch(uRawTex, ivec2(baseX + 1, baseY), 0).r; count++; }
+    c = ch(baseX, baseY + 1); if (c == targetCh) { sum += texelFetch(uRawTex, ivec2(baseX, baseY + 1), 0).r; count++; }
+    c = ch(baseX + 1, baseY + 1); if (c == targetCh) { sum += texelFetch(uRawTex, ivec2(baseX + 1, baseY + 1), 0).r; count++; }
+
+    float avg = count > 0 ? sum / float(count) : 0.0;
+    frag = vec4(avg, 0.0, 0.0, 1.0);
 }
 """.trimIndent()
 }
