@@ -1,16 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#000000">
+    android:background="@color/surface_darkest">
+
+    <!-- 顶部 spacer：吸收剩余空间，将内容推到底部 -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@color/surface_darkest" />
 
     <!-- 预览区：GLSurfaceView + 对焦指示器叠加层 -->
     <FrameLayout
         android:id="@+id/previewContainer"
         android:layout_width="match_parent"
-        android:layout_height="240dp"
-        android:layout_marginTop="60dp">
+        android:layout_height="@dimen/preview_height"
+        android:layout_marginTop="@dimen/spacing_xxl">
 
         <android.opengl.GLSurfaceView
             android:id="@+id/glSurfaceView"
@@ -32,9 +40,9 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="4dp"
-        android:background="#222222">
+        android:paddingHorizontal="@dimen/spacing_xl"
+        android:paddingVertical="@dimen/spacing_xs"
+        android:background="@color/surface_medium">
 
         <TextView
             android:id="@+id/tvStatusShutter"
@@ -42,8 +50,8 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="快门 --"
-            android:textColor="#CCCCCC"
-            android:textSize="12sp" />
+            android:textColor="@color/text_secondary"
+            android:textSize="@dimen/text_body" />
 
         <TextView
             android:id="@+id/tvStatusIso"
@@ -51,8 +59,8 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="ISO --"
-            android:textColor="#CCCCCC"
-            android:textSize="12sp"
+            android:textColor="@color/text_secondary"
+            android:textSize="@dimen/text_body"
             android:gravity="center" />
 
         <TextView
@@ -61,23 +69,23 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="滤镜: 无"
-            android:textColor="#CCCCCC"
-            android:textSize="12sp"
+            android:textColor="@color/text_secondary"
+            android:textSize="@dimen/text_body"
             android:gravity="end"
             android:maxLines="1"
             android:ellipsize="end" />
     </LinearLayout>
 
-    <!-- 手动控制栏：快门速度 + ISO（滑到最左 = Auto，过段落线 = 手动） -->
+    <!-- 手动控制栏：快门速度 + ISO -->
     <LinearLayout
         android:id="@+id/manualControlBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingHorizontal="12dp"
-        android:paddingVertical="6dp"
-        android:background="#1a1a1a">
+        android:paddingHorizontal="@dimen/spacing_lg"
+        android:paddingVertical="@dimen/spacing_xxs"
+        android:background="@color/surface_dark">
 
         <!-- 左半：快门速度 -->
         <LinearLayout
@@ -97,34 +105,31 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="快门 "
-                    android:textColor="#888888"
-                    android:textSize="11sp" />
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="@dimen/text_sm" />
 
                 <TextView
                     android:id="@+id/tvShutterSpeed"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Auto"
-                    android:textColor="#FFFFFF"
-                    android:textSize="13sp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="@dimen/text_body_lg"
                     android:textStyle="bold" />
             </LinearLayout>
 
-            <SeekBar
+            <com.google.android.material.slider.Slider
                 android:id="@+id/sbShutterSpeed"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:max="14"
-                android:progressDrawable="@drawable/seekbar_track_detent"
-                android:splitTrack="false" />
+                android:layout_marginTop="-8dp" />
         </LinearLayout>
 
-        <!-- 段落分隔线 -->
         <View
             android:layout_width="1dp"
             android:layout_height="28dp"
-            android:background="#444444"
-            android:layout_marginHorizontal="12dp" />
+            android:background="@color/divider"
+            android:layout_marginHorizontal="@dimen/spacing_lg" />
 
         <!-- 右半：ISO -->
         <LinearLayout
@@ -144,91 +149,83 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="ISO "
-                    android:textColor="#888888"
-                    android:textSize="11sp" />
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="@dimen/text_sm" />
 
                 <TextView
                     android:id="@+id/tvIso"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Auto"
-                    android:textColor="#FFFFFF"
-                    android:textSize="13sp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="@dimen/text_body_lg"
                     android:textStyle="bold" />
             </LinearLayout>
 
-            <SeekBar
+            <com.google.android.material.slider.Slider
                 android:id="@+id/sbIso"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:max="9"
-                android:progressDrawable="@drawable/seekbar_track_detent"
-                android:splitTrack="false" />
+                android:layout_marginTop="-8dp" />
         </LinearLayout>
     </LinearLayout>
 
-    <!-- 快门按钮栏 + 设置入口 -->
+    <!-- 快门按钮栏（Material Design 风格） -->
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingVertical="0dp"
-        android:background="#222222">
+        android:paddingVertical="@dimen/spacing_sm"
+        android:background="@color/surface_medium">
 
-        <!-- 最后照片按钮：快门左边与屏幕边缘的中间位置 -->
         <ImageButton
             android:id="@+id/btnLastPhoto"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
+            android:layout_width="@dimen/widget_size"
+            android:layout_height="@dimen/widget_size"
             android:layout_gravity="start|center_vertical"
-            android:layout_marginStart="60dp"
+            android:layout_marginStart="@dimen/spacing_xxxl"
             android:src="@drawable/ic_filter"
-            android:background="@drawable/filter_btn_bg"
+            android:background="@drawable/btn_icon_md_bg"
             android:scaleType="center"
             android:contentDescription="滤镜" />
 
-        <!-- 快门按钮居中 -->
-        <ImageButton
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnShutter"
-            android:layout_width="72dp"
-            android:layout_height="72dp"
+            style="@style/Widget.Material3.Button.ElevatedButton"
+            android:layout_width="@dimen/shutter_size"
+            android:layout_height="@dimen/shutter_size"
             android:layout_gravity="center"
-            android:src="@null"
-            android:background="@drawable/red_circle_shutter"
-            android:foreground="?attr/selectableItemBackgroundBorderless"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            app:cornerRadius="36dp"
+            app:backgroundTint="@color/shutter_inner"
+            app:strokeWidth="0dp"
+            app:rippleColor="@color/overlay_light"
             android:contentDescription="拍照" />
 
-        <!-- 设置按钮：快门右边与屏幕边缘的中间位置 -->
         <ImageButton
             android:id="@+id/btnSettings"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
+            android:layout_width="@dimen/widget_size"
+            android:layout_height="@dimen/widget_size"
             android:layout_gravity="end|center_vertical"
-            android:layout_marginEnd="60dp"
+            android:layout_marginEnd="@dimen/spacing_xxxl"
             android:src="@drawable/ic_settings_gear"
-            android:background="@drawable/settings_gear_bg"
+            android:background="@drawable/btn_icon_md_bg"
             android:scaleType="center"
             android:contentDescription="设置" />
     </FrameLayout>
 
-    <!-- LUT 选择栏：横向滚动 -->
+    <!-- LUT 选择栏 -->
     <LinearLayout
         android:id="@+id/lutSelectorBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:paddingTop="3dp"
-        android:background="#1A1A1A">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="LUT"
-            android:textColor="#888888"
-            android:textSize="10sp"
-            android:layout_marginEnd="6dp" />
+        android:paddingHorizontal="@dimen/spacing_md"
+        android:paddingVertical="@dimen/spacing_xs"
+        android:background="@color/surface_dark">
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/lutRecyclerView"
@@ -236,40 +233,35 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:clipToPadding="false"
-            android:paddingEnd="4dp" />
+            android:paddingEnd="@dimen/spacing_xs" />
 
-        <ImageView
+        <ImageButton
             android:id="@+id/btnManageFilters"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
+            android:layout_width="@dimen/widget_size"
+            android:layout_height="@dimen/widget_size"
             android:src="@drawable/ic_settings_gear"
             android:scaleType="center"
-            android:background="@drawable/settings_gear_bg"
+            android:background="@drawable/btn_icon_md_bg"
             android:contentDescription="管理滤镜"
-            android:layout_marginStart="4dp" />
+            android:layout_marginStart="@dimen/spacing_xs" />
     </LinearLayout>
 
-    <!-- 底部镜头按钮栏：横向滚动 -->
+    <!-- 底部镜头按钮栏 -->
     <HorizontalScrollView
         android:id="@+id/lensScroll"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:scrollbars="none"
-        android:background="#222222">
+        android:clipToPadding="false"
+        android:paddingHorizontal="@dimen/spacing_xs"
+        android:background="@color/surface_medium">
 
         <LinearLayout
             android:id="@+id/lensButtonBar"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:paddingVertical="2dp"
-            android:paddingHorizontal="6dp" />
+            android:paddingVertical="@dimen/spacing_xs" />
     </HorizontalScrollView>
-
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="#000000" />
 
 </LinearLayout>

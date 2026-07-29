@@ -18,17 +18,17 @@ class CurveEditorView @JvmOverloads constructor(
     private val displayLUT = FloatArray(256)
 
     private val paintGrid = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(40, 255, 255, 255)
+        color = Color.argb(40, 44, 44, 44)
         strokeWidth = 1f
         style = Paint.Style.STROKE
     }
     private val paintDiag = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(60, 255, 255, 255)
+        color = Color.argb(60, 44, 44, 44)
         strokeWidth = 1f
         style = Paint.Style.STROKE
     }
     private val paintCurve = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(255, 79, 195, 247)
+        color = Color.argb(255, 100, 181, 246)
         strokeWidth = 4f
         style = Paint.Style.STROKE
         isAntiAlias = true
@@ -39,23 +39,23 @@ class CurveEditorView @JvmOverloads constructor(
         style = Paint.Style.STROKE
     }
     private val paintPoint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = Color.argb(255, 248, 244, 236)
         style = Paint.Style.FILL
         isAntiAlias = true
     }
     private val paintPointStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(255, 79, 195, 247)
+        color = Color.argb(255, 100, 181, 246)
         style = Paint.Style.STROKE
         strokeWidth = 3f
         isAntiAlias = true
     }
     private val paintEndpoints = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(180, 255, 255, 255)
+        color = Color.argb(180, 44, 44, 44)
         style = Paint.Style.FILL
         isAntiAlias = true
     }
     private val paintFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(30, 79, 195, 247)
+        color = Color.argb(30, 100, 181, 246)
         style = Paint.Style.FILL
     }
 
@@ -107,7 +107,7 @@ class CurveEditorView @JvmOverloads constructor(
         val graphH = bottom - top
 
         if (!previewMode) {
-            canvas.drawColor(Color.argb(255, 30, 30, 30))
+            canvas.drawColor(Color.argb(255, 248, 244, 236))
             drawGrid(canvas, left, top, right, bottom, graphW, graphH)
             canvas.drawLine(left, bottom, right, top, paintDiag)
         }

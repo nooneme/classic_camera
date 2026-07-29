@@ -11,7 +11,7 @@ import android.util.Log
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
-import android.widget.Button
+import com.google.android.material.button.MaterialButton
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -30,9 +30,9 @@ class ApplyFilterActivity : AppCompatActivity() {
     private lateinit var imagePlaceholder: LinearLayout
     private lateinit var imagePreview: ImageView
     private lateinit var filterSpinner: Spinner
-    private lateinit var btnApply: Button
+    private lateinit var btnApply: MaterialButton
     private lateinit var resultImage: ImageView
-    private lateinit var btnSave: Button
+    private lateinit var btnSave: MaterialButton
     private lateinit var progressBar: ProgressBar
     private lateinit var tvResultLabel: TextView
     private lateinit var scrollView: ScrollView

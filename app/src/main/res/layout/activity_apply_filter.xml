@@ -3,24 +3,24 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#1a1a1a"
+    android:background="@color/surface_dark"
     android:fitsSystemWindows="true">
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="@dimen/toolbar_height"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingHorizontal="16dp"
-        android:background="#222222">
+        android:paddingHorizontal="@dimen/spacing_xl"
+        android:background="@color/surface_medium">
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="应用到图片"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
+            android:textColor="@color/text_primary"
+            android:textSize="@dimen/text_xxl"
             android:textStyle="bold" />
     </LinearLayout>
 
@@ -34,20 +34,20 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="24dp">
+            android:padding="@dimen/spacing_xxl">
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="选择图片"
-                android:textColor="#888888"
-                android:textSize="14sp"
-                android:paddingBottom="8dp" />
+                android:textColor="@color/text_tertiary"
+                android:textSize="@dimen/text_body_xl"
+                android:paddingBottom="@dimen/spacing_md" />
 
             <FrameLayout
                 android:id="@+id/imageArea"
                 android:layout_width="match_parent"
-                android:layout_height="200dp"
+                android:layout_height="@dimen/upload_area_height_large"
                 android:background="@drawable/image_upload_border"
                 android:clickable="true"
                 android:focusable="true"
@@ -62,17 +62,17 @@
                     android:gravity="center">
 
                     <ImageView
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
+                        android:layout_width="@dimen/icon_size_large"
+                        android:layout_height="@dimen/icon_size_large"
                         android:src="@drawable/ic_add_image" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="点击选择图片"
-                        android:textColor="#666666"
-                        android:textSize="14sp"
-                        android:layout_marginTop="8dp" />
+                        android:textColor="@color/text_disabled"
+                        android:textSize="@dimen/text_body_xl"
+                        android:layout_marginTop="@dimen/spacing_md" />
                 </LinearLayout>
 
                 <ImageView
@@ -87,37 +87,37 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="选择滤镜"
-                android:textColor="#888888"
-                android:textSize="14sp"
-                android:paddingTop="20dp"
-                android:paddingBottom="8dp" />
+                android:textColor="@color/text_tertiary"
+                android:textSize="@dimen/text_body_xl"
+                android:paddingTop="@dimen/spacing_xl"
+                android:paddingBottom="@dimen/spacing_md" />
 
             <Spinner
                 android:id="@+id/filterSpinner"
                 android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:background="#333333"
-                android:paddingHorizontal="12dp" />
+                android:layout_height="@dimen/button_height"
+                android:background="@color/surface_light"
+                android:paddingHorizontal="@dimen/spacing_lg" />
 
-            <Button
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnApply"
                 android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="24dp"
+                android:layout_height="@dimen/button_height"
+                android:layout_marginTop="@dimen/spacing_xxl"
                 android:text="应用"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#4A90D9"
-                android:enabled="false" />
+                android:enabled="false"
+                style="@style/Widget.ClassicCamera.Button"
+                android:backgroundTint="@color/accent" />
 
             <TextView
+                android:id="@+id/tvResultLabel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="效果预览"
-                android:textColor="#888888"
-                android:textSize="14sp"
-                android:paddingTop="20dp"
-                android:paddingBottom="8dp"
-                android:id="@+id/tvResultLabel"
+                android:textColor="@color/text_tertiary"
+                android:textSize="@dimen/text_body_xl"
+                android:paddingTop="@dimen/spacing_xl"
+                android:paddingBottom="@dimen/spacing_md"
                 android:visibility="gone" />
 
             <ProgressBar
@@ -125,7 +125,7 @@
                 android:layout_width="32dp"
                 android:layout_height="32dp"
                 android:layout_gravity="center"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="@dimen/spacing_xl"
                 android:visibility="gone" />
 
             <ImageView
@@ -135,15 +135,15 @@
                 android:scaleType="fitCenter"
                 android:visibility="gone" />
 
-            <Button
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnSave"
                 android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="24dp"
+                android:layout_height="@dimen/button_height"
+                android:layout_marginTop="@dimen/spacing_xxl"
                 android:text="保存到相册"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#4CAF50"
-                android:visibility="gone" />
+                android:visibility="gone"
+                style="@style/Widget.ClassicCamera.Button"
+                android:backgroundTint="@color/success" />
 
         </LinearLayout>
     </ScrollView>

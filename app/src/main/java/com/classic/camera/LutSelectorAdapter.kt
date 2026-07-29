@@ -100,13 +100,13 @@ class LutSelectorAdapter(
         val isSelected = (entry.file?.absolutePath ?: "") == selectedPath
 
         holder.name.text = entry.name
-        holder.name.setTextColor(if (isSelected) 0xFFFFFFFF.toInt() else 0xFFCCCCCC.toInt())
+        holder.name.setTextColor(if (isSelected) 0xFF2C2C2C.toInt() else 0xFF555555.toInt())
 
         if (entry.thumbnail != null) {
             holder.thumb.setImageBitmap(entry.thumbnail)
         } else {
             holder.thumb.setImageBitmap(null)
-            holder.thumb.setBackgroundColor(0xFF2A2A2A.toInt())
+            holder.thumb.setBackgroundColor(0xFFF0F5FF.toInt())
         }
 
         holder.selectedOverlay.visibility = if (isSelected) View.VISIBLE else View.GONE

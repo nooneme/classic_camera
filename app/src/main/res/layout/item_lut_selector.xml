@@ -1,51 +1,63 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="52dp"
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="@dimen/lut_thumb_container"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:gravity="center"
-    android:padding="1dp">
+    android:layout_gravity="center"
+    android:padding="1dp"
+    app:cardCornerRadius="@dimen/corner_medium"
+    app:cardBackgroundColor="@android:color/transparent"
+    app:strokeWidth="0dp"
+    app:contentPadding="0dp">
 
-    <FrameLayout
-        android:layout_width="36dp"
-        android:layout_height="36dp"
-        android:background="@drawable/lut_thumb_border">
-
-        <ImageView
-            android:id="@+id/ivLutThumb"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:scaleType="centerCrop"
-            android:background="#2A2A2A" />
-
-        <View
-            android:id="@+id/selectedOverlay"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="#88000000"
-            android:visibility="gone" />
-
-        <TextView
-            android:id="@+id/tvCheckMark"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:gravity="center"
-            android:text="✓"
-            android:textColor="#4A90D9"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
-    </FrameLayout>
-
-    <TextView
-        android:id="@+id/tvLutName"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="center"
-        android:maxLines="1"
-        android:ellipsize="end"
-        android:textSize="8sp"
-        android:textColor="#CCCCCC"
-        android:layout_marginTop="1dp" />
+        android:orientation="vertical"
+        android:gravity="center">
 
-</LinearLayout>
+        <FrameLayout
+            android:layout_width="@dimen/lut_thumb_size"
+            android:layout_height="@dimen/lut_thumb_size"
+            android:background="@drawable/lut_thumb_border">
+
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/ivLutThumb"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:background="@color/surface_card"
+                app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.ShapeableImageView.Corner" />
+
+            <View
+                android:id="@+id/selectedOverlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/overlay_dark"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/tvCheckMark"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:text="✓"
+                android:textColor="@color/accent"
+                android:textSize="@dimen/text_xl"
+                android:textStyle="bold"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/tvLutName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textSize="@dimen/text_xxs"
+            android:textColor="@color/text_secondary"
+            android:layout_marginTop="1dp" />
+
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>

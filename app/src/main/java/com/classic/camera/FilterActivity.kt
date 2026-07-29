@@ -8,7 +8,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
-import android.widget.Button
+import com.google.android.material.button.MaterialButton
 import android.widget.AdapterView
 import android.widget.LinearLayout
 import android.widget.ListView
@@ -50,11 +50,11 @@ class FilterActivity : AppCompatActivity() {
             finish()
         }
 
-        findViewById<Button>(R.id.btnNewFilter).setOnClickListener {
+        findViewById<MaterialButton>(R.id.btnNewFilter).setOnClickListener {
             startActivity(Intent(this, LearnFilterActivity::class.java))
         }
 
-        findViewById<Button>(R.id.btnApplyFilter).setOnClickListener {
+        findViewById<MaterialButton>(R.id.btnApplyFilter).setOnClickListener {
             startActivity(Intent(this, ApplyFilterActivity::class.java))
         }
 
@@ -116,10 +116,10 @@ class FilterActivity : AppCompatActivity() {
                 .inflate(R.layout.item_filter, parent, false)
             val item = filterList[pos]
             val isSelected = (item.file?.absolutePath ?: "") == currentFilterPath
-            view.setBackgroundColor(if (isSelected) 0xFF3A6EA5.toInt() else 0xFF222222.toInt())
+            view.setBackgroundColor(if (isSelected) 0xFF90CAF9.toInt() else 0xFFFFF8F0.toInt())
             view.findViewById<TextView>(R.id.tvFilterName).text = item.name
             view.findViewById<TextView>(R.id.tvFilterName).setTextColor(
-                if (isSelected) 0xFFFFFFFF.toInt() else 0xFFCCCCCC.toInt()
+                if (isSelected) 0xFF2C2C2C.toInt() else 0xFF555555.toInt()
             )
             val tvSize = view.findViewById<TextView>(R.id.tvFilterSize)
             val btnDelete = view.findViewById<TextView>(R.id.btnDelete)

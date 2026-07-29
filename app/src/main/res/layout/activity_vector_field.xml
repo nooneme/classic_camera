@@ -4,14 +4,14 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@drawable/dialog_bg"
-    android:layout_margin="24dp">
+    android:layout_margin="@dimen/spacing_xxl">
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="48dp"
+        android:layout_height="@dimen/header_visualize"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingHorizontal="16dp">
+        android:paddingHorizontal="@dimen/spacing_xl">
 
         <TextView
             android:id="@+id/tvTitle"
@@ -19,8 +19,8 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="3D 向量场"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp"
+            android:textColor="@color/text_primary"
+            android:textSize="@dimen/text_xl"
             android:textStyle="bold" />
 
         <TextView
@@ -28,13 +28,12 @@
             android:layout_width="36dp"
             android:layout_height="36dp"
             android:text="×"
-            android:textColor="#FFFFFF"
-            android:textSize="22sp"
+            android:textColor="@color/text_primary"
+            android:textSize="@dimen/text_xxxl"
             android:gravity="center"
             android:clickable="true"
             android:focusable="true"
             android:background="?attr/selectableItemBackgroundBorderless" />
-
     </LinearLayout>
 
     <android.opengl.GLSurfaceView
@@ -46,10 +45,10 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:padding="12dp"
+        android:padding="@dimen/spacing_lg"
         android:text="每条线段：起点=原色，终点=映射色，方向=偏移量。拖拽旋转"
-        android:textColor="#888888"
-        android:textSize="12sp"
+        android:textColor="@color/text_tertiary"
+        android:textSize="@dimen/text_body"
         android:gravity="center" />
 
 </LinearLayout>

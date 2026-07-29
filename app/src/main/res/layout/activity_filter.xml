@@ -3,23 +3,23 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#1a1a1a"
+    android:background="@color/surface_dark"
     android:fitsSystemWindows="true">
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="@dimen/toolbar_height"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingHorizontal="16dp"
-        android:background="#222222">
+        android:paddingHorizontal="@dimen/spacing_xl"
+        android:background="@color/surface_medium">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="滤镜"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
+            android:textColor="@color/text_primary"
+            android:textSize="@dimen/text_xxl"
             android:textStyle="bold" />
     </LinearLayout>
 
@@ -30,8 +30,8 @@
         android:layout_weight="1"
         android:gravity="center"
         android:text="暂无滤镜，点击下方「新建」开始学习"
-        android:textColor="#666666"
-        android:textSize="14sp"
+        android:textColor="@color/text_tertiary"
+        android:textSize="@dimen/text_body_xl"
         android:visibility="gone" />
 
     <ListView
@@ -39,42 +39,40 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:divider="#333333"
+        android:divider="@color/divider_dark"
         android:dividerHeight="1dp"
-        android:padding="8dp" />
+        android:padding="@dimen/spacing_md" />
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="@dimen/toolbar_height"
         android:orientation="horizontal"
         android:gravity="center"
-        android:background="#222222"
-        android:paddingHorizontal="24dp"
-        android:paddingVertical="8dp">
+        android:background="@color/surface_medium"
+        android:paddingHorizontal="@dimen/spacing_xxl"
+        android:paddingVertical="@dimen/spacing_md">
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnApplyFilter"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:text="应用到图片"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#4A90D9"
-            android:layout_marginEnd="4dp" />
+            style="@style/Widget.ClassicCamera.Button"
+            android:layout_marginEnd="@dimen/spacing_xs" />
 
         <Space
-            android:layout_width="8dp"
+            android:layout_width="@dimen/spacing_md"
             android:layout_height="0dp" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnNewFilter"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:text="新建"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#4A90D9"
-            android:layout_marginStart="4dp" />
+            style="@style/Widget.ClassicCamera.Button"
+            android:layout_marginStart="@dimen/spacing_xs" />
     </LinearLayout>
 
 </LinearLayout>

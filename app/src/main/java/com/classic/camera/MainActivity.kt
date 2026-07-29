@@ -32,11 +32,13 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.Button
+import com.google.android.material.button.MaterialButton
 import android.widget.ImageButton
 import android.widget.LinearLayout
-import android.widget.SeekBar
+import android.widget.ScrollView
+import com.google.android.material.slider.Slider
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -54,14 +56,14 @@ class MainActivity : AppCompatActivity() {
 
     // UI 组件
     private lateinit var glSurfaceView: GLSurfaceView
-    private lateinit var btnShutter: ImageButton
+    private lateinit var btnShutter: MaterialButton
     private lateinit var btnLastPhoto: ImageButton
     private lateinit var btnSettings: ImageButton
     private lateinit var lensButtonBar: LinearLayout
 
     // 手动曝光控制 UI
-    private lateinit var sbShutterSpeed: SeekBar
-    private lateinit var sbIso: SeekBar
+    private lateinit var sbShutterSpeed: Slider
+    private lateinit var sbIso: Slider
     private lateinit var tvShutterSpeed: TextView
     private lateinit var tvIso: TextView
     // 状态栏
@@ -240,7 +242,7 @@ class MainActivity : AppCompatActivity() {
                 if (idx >= 0) lutRecyclerView.post {
                     val lm = lutRecyclerView.layoutManager as LinearLayoutManager
                     val halfW = lutRecyclerView.width / 2
-                    val itemHalfW = (26 * resources.displayMetrics.density + 0.5f).toInt()
+                    val itemHalfW = resources.getDimensionPixelSize(R.dimen.lut_thumb_container) / 2
                     lm.scrollToPositionWithOffset(idx, (halfW - itemHalfW).coerceAtLeast(0))
                 }
             }
@@ -248,7 +250,7 @@ class MainActivity : AppCompatActivity() {
         lutAdapter.selectedPath = currentFilterPath
         lutRecyclerView.adapter = lutAdapter
 
-        findViewById<android.widget.ImageView>(R.id.btnManageFilters).setOnClickListener {
+        findViewById<android.widget.ImageButton>(R.id.btnManageFilters).setOnClickListener {
             val intent = Intent(this, FilterActivity::class.java).apply {
                 putExtra("current_filter", currentFilterPath)
             }
@@ -384,60 +386,67 @@ class MainActivity : AppCompatActivity() {
 
     /** 初始化快门速度 / ISO 滑块，设置段落感交互。 */
     private fun setupManualControls() {
-        // 快门速度滑块
-        sbShutterSpeed.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            private var wasManual = false
-            override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                if (!fromUser) return
-                val isManual = progress > 0
-                // 边界大震
-                if (isManual != wasManual) {
-                    triggerHaptic(HEAVY)
-                }
-                wasManual = isManual
-                // 手动区连续小震（节流，正向/反向都检测）
-                if (isManual && kotlin.math.abs(progress - lastShutterTick) >= TICK_THROTTLE) {
-                    triggerHaptic(TICK)
-                    lastShutterTick = progress
-                }
-                updateLabelForShutter(progress)
-                pushExposureParams()
+        var wasShutterManual = false
+        var wasIsoManual = false
+
+        sbShutterSpeed.valueFrom = 0f
+        sbShutterSpeed.stepSize = 1f
+        sbShutterSpeed.setTickVisible(false)
+        sbShutterSpeed.setLabelBehavior(2)
+        sbIso.valueFrom = 0f
+        sbIso.stepSize = 1f
+        sbIso.setTickVisible(false)
+        sbIso.setLabelBehavior(2)
+
+        sbShutterSpeed.addOnChangeListener { _, value, fromUser ->
+            if (!fromUser) return@addOnChangeListener
+            val progress = value.toInt()
+            val isManual = progress > 0
+            if (isManual != wasShutterManual) {
+                triggerHaptic(HEAVY)
             }
-            override fun onStartTrackingTouch(seekBar: SeekBar) {
-                lastShutterTick = sbShutterSpeed.progress
+            wasShutterManual = isManual
+            if (isManual && kotlin.math.abs(progress - lastShutterTick) >= TICK_THROTTLE) {
+                triggerHaptic(TICK)
+                lastShutterTick = progress
             }
-            override fun onStopTrackingTouch(seekBar: SeekBar) {
-                // 拖拽结束后保存滑块位置及半自动 AE 收敛值
+            updateLabelForShutter(progress)
+            pushExposureParams()
+        }
+        sbShutterSpeed.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+            override fun onStartTrackingTouch(slider: Slider) {
+                lastShutterTick = slider.value.toInt()
+            }
+            override fun onStopTrackingTouch(slider: Slider) {
                 LensStore.saveSliderProgress(this@MainActivity,
-                    sbShutterSpeed.progress, sbIso.progress,
+                    slider.value.toInt(), sbIso.value.toInt(),
                     manualController?.iso ?: 100,
                     manualController?.exposureTimeNs ?: ManualController.DEFAULT_EXPOSURE_NS)
             }
         })
 
-        // ISO 滑块
-        sbIso.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            private var wasManual = false
-            override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                if (!fromUser) return
-                val isManual = progress > 0
-                if (isManual != wasManual) {
-                    triggerHaptic(HEAVY)
-                }
-                wasManual = isManual
-                if (isManual && kotlin.math.abs(progress - lastIsoTick) >= TICK_THROTTLE) {
-                    triggerHaptic(TICK)
-                    lastIsoTick = progress
-                }
-                updateLabelForIso(progress)
-                pushExposureParams()
+        sbIso.addOnChangeListener { _, value, fromUser ->
+            if (!fromUser) return@addOnChangeListener
+            val progress = value.toInt()
+            val isManual = progress > 0
+            if (isManual != wasIsoManual) {
+                triggerHaptic(HEAVY)
             }
-            override fun onStartTrackingTouch(seekBar: SeekBar) {
-                lastIsoTick = sbIso.progress
+            wasIsoManual = isManual
+            if (isManual && kotlin.math.abs(progress - lastIsoTick) >= TICK_THROTTLE) {
+                triggerHaptic(TICK)
+                lastIsoTick = progress
             }
-            override fun onStopTrackingTouch(seekBar: SeekBar) {
+            updateLabelForIso(progress)
+            pushExposureParams()
+        }
+        sbIso.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+            override fun onStartTrackingTouch(slider: Slider) {
+                lastIsoTick = slider.value.toInt()
+            }
+            override fun onStopTrackingTouch(slider: Slider) {
                 LensStore.saveSliderProgress(this@MainActivity,
-                    sbShutterSpeed.progress, sbIso.progress,
+                    sbShutterSpeed.value.toInt(), slider.value.toInt(),
                     manualController?.iso ?: 100,
                     manualController?.exposureTimeNs ?: ManualController.DEFAULT_EXPOSURE_NS)
             }
@@ -446,7 +455,7 @@ class MainActivity : AppCompatActivity() {
 
     /** 把当前滑块值应用到 ManualController → 通知 CameraController 更新预览。 */
     private fun pushExposureParams() {
-        manualController?.updateFromSliders(sbShutterSpeed.progress, sbIso.progress)
+        manualController?.updateFromSliders(sbShutterSpeed.value.toInt(), sbIso.value.toInt())
         cameraController?.updateCaptureParams()
     }
 
@@ -554,18 +563,22 @@ class MainActivity : AppCompatActivity() {
             visibility = if (multiFrame) android.view.View.VISIBLE else android.view.View.GONE
         }
 
-        val sbFrameCount = SeekBar(this).apply {
-            max = 6
-            progress = (multiFrameCount - 2).coerceIn(0, 6)
+        val sbFrameCount = Slider(this).apply {
+            valueFrom = 0f
+            stepSize = 1f
+            setTickVisible(false)
+            setLabelBehavior(2)
+            valueTo = 6f
+            value = (multiFrameCount - 2).coerceIn(0, 6).toFloat()
             setPadding(48, 0, 48, 16)
             visibility = if (multiFrame) android.view.View.VISIBLE else android.view.View.GONE
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    tvFrameCount.text = "合成帧数: ${progress + 2}"
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar) {
-                    applyMultiFrame(true, progress + 2)
+            addOnChangeListener { _, value, _ ->
+                tvFrameCount.text = "合成帧数: ${value.toInt() + 2}"
+            }
+            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) {}
+                override fun onStopTrackingTouch(slider: Slider) {
+                    applyMultiFrame(true, slider.value.toInt() + 2)
                 }
             })
         }
@@ -575,8 +588,8 @@ class MainActivity : AppCompatActivity() {
             sbFrameCount.visibility = vis
             tvFrameCount.visibility = vis
             if (isChecked) {
-                tvFrameCount.text = "合成帧数: ${sbFrameCount.progress + 2}"
-                applyMultiFrame(true, sbFrameCount.progress + 2)
+                tvFrameCount.text = "合成帧数: ${sbFrameCount.value.toInt() + 2}"
+                applyMultiFrame(true, sbFrameCount.value.toInt() + 2)
             } else {
                 applyMultiFrame(false, 0)
             }
@@ -611,23 +624,27 @@ class MainActivity : AppCompatActivity() {
             textSize = 15f
             setPadding(48, 8, 48, 4)
         }
-        val sbWlOffset = SeekBar(this).apply {
-            max = 512
-            progress = (wlOffset + 256).coerceIn(0, 512)
+        val sbWlOffset = Slider(this).apply {
+            valueFrom = 0f
+            stepSize = 1f
+            setTickVisible(false)
+            setLabelBehavior(2)
+            valueTo = 512f
+            value = (wlOffset + 256).coerceIn(0, 512).toFloat()
             setPadding(48, 0, 48, 16)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    val offset = progress - 256
-                    tvWlOffset.text = "白电平补偿: ${if (offset >= 0) "+$offset" else "$offset"}"
+            addOnChangeListener { _, value, _ ->
+                val offset = value.toInt() - 256
+                tvWlOffset.text = "白电平补偿: ${if (offset >= 0) "+$offset" else "$offset"}"
+                glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = offset.toFloat() }
+            }
+            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) {
+                    val offset = slider.value.toInt() - 256
                     glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = offset.toFloat() }
+                    showToneMapPreview(tvWlOffset, slider)
                 }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {
-                    val offset = seekBar.progress - 256
-                    glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = offset.toFloat() }
-                    showToneMapPreview(tvWlOffset, seekBar)
-                }
-                override fun onStopTrackingTouch(seekBar: SeekBar) {
-                    val offset = seekBar.progress - 256
+                override fun onStopTrackingTouch(slider: Slider) {
+                    val offset = slider.value.toInt() - 256
                     prefs.edit().putInt("white_level_offset", offset).apply()
                     hideToneMapPreview()
                 }
@@ -644,23 +661,27 @@ class MainActivity : AppCompatActivity() {
             textSize = 15f
             setPadding(48, 16, 48, 4)
         }
-        val sbToneMapD = SeekBar(this).apply {
-            max = 300
-            progress = ((toneMapD + 1f) * 100).roundToInt().coerceIn(0, 300)
+        val sbToneMapD = Slider(this).apply {
+            valueFrom = 0f
+            stepSize = 1f
+            setTickVisible(false)
+            setLabelBehavior(2)
+            valueTo = 300f
+            value = ((toneMapD + 1f) * 100).roundToInt().coerceIn(0, 300).toFloat()
             setPadding(48, 0, 48, 16)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    val v = (progress / 100f) - 1f
-                    tvToneMapD.text = "色调 D（默认0.59）: ${"%.2f".format(v)}"
+            addOnChangeListener { _, value, _ ->
+                val v = (value.toInt() / 100f) - 1f
+                tvToneMapD.text = "色调 D（默认0.59）: ${"%.2f".format(v)}"
+                glSurfaceView.queueEvent { pipeline?.toneMapD = v }
+            }
+            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) {
+                    val v = (slider.value.toInt() / 100f) - 1f
                     glSurfaceView.queueEvent { pipeline?.toneMapD = v }
+                    showToneMapPreview(tvToneMapD, slider)
                 }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {
-                    val v = (seekBar.progress / 100f) - 1f
-                    glSurfaceView.queueEvent { pipeline?.toneMapD = v }
-                    showToneMapPreview(tvToneMapD, seekBar)
-                }
-                override fun onStopTrackingTouch(seekBar: SeekBar) {
-                    val v = (seekBar.progress / 100f) - 1f
+                override fun onStopTrackingTouch(slider: Slider) {
+                    val v = (slider.value.toInt() / 100f) - 1f
                     prefs.edit().putFloat("tone_map_d", v).apply()
                     hideToneMapPreview()
                 }
@@ -669,6 +690,8 @@ class MainActivity : AppCompatActivity() {
 
         layout.addView(tvToneMapD)
         layout.addView(sbToneMapD)
+
+        val scrollView = ScrollView(this)
 
         // ---- 色调曲线编辑器（直接嵌入弹窗） ----
         val curveH = (200 * resources.displayMetrics.density).toInt()
@@ -679,6 +702,7 @@ class MainActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.MATCH_PARENT, curveH
             ).apply { setMargins(24, 8, 24, 8) }
             onDragStart = {
+                scrollView.requestDisallowInterceptTouchEvent(true)
                 settingsDialog?.window?.let { w ->
                     w.setDimAmount(0f)
                     w.decorView.background = null
@@ -690,6 +714,7 @@ class MainActivity : AppCompatActivity() {
                 settingsDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.alpha = 0f
             }
             onDragEnd = {
+                scrollView.requestDisallowInterceptTouchEvent(false)
                 settingsDialog?.window?.let { w ->
                     w.setDimAmount(0.6f)
                     w.decorView.background = settingsDialogOriginalBg
@@ -716,21 +741,25 @@ class MainActivity : AppCompatActivity() {
             setPadding(48, 16, 48, 4)
         }
         glSurfaceView.queueEvent { pipeline?.lutIntensity = lutIntensity }
-        val sbLutIntensity = SeekBar(this).apply {
-            max = 100
-            progress = (lutIntensity * 100).roundToInt().coerceIn(0, 100)
+        val sbLutIntensity = Slider(this).apply {
+            valueFrom = 0f
+            stepSize = 1f
+            setTickVisible(false)
+            setLabelBehavior(2)
+            valueTo = 100f
+            value = (lutIntensity * 100).roundToInt().coerceIn(0, 100).toFloat()
             setPadding(48, 0, 48, 16)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    tvLutIntensity.text = "滤镜强度: ${progress}%"
-                    glSurfaceView.queueEvent { pipeline?.lutIntensity = progress / 100f }
+            addOnChangeListener { _, value, _ ->
+                tvLutIntensity.text = "滤镜强度: ${value.toInt()}%"
+                glSurfaceView.queueEvent { pipeline?.lutIntensity = value.toInt() / 100f }
+            }
+            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) {
+                    glSurfaceView.queueEvent { pipeline?.lutIntensity = slider.value / 100f }
+                    showToneMapPreview(tvLutIntensity, slider)
                 }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {
-                    glSurfaceView.queueEvent { pipeline?.lutIntensity = seekBar.progress / 100f }
-                    showToneMapPreview(tvLutIntensity, seekBar)
-                }
-                override fun onStopTrackingTouch(seekBar: SeekBar) {
-                    val v = seekBar.progress / 100f
+                override fun onStopTrackingTouch(slider: Slider) {
+                    val v = slider.value / 100f
                     prefs.edit().putFloat("lut_intensity", v).apply()
                     hideToneMapPreview()
                 }
@@ -745,23 +774,27 @@ class MainActivity : AppCompatActivity() {
             textSize = 15f
             setPadding(48, 16, 48, 4)
         }
-        val sbColorTemp = SeekBar(this).apply {
-            max = 130
-            progress = ((colorTempKelvin - 2000) / 100).coerceIn(0, 130)
+        val sbColorTemp = Slider(this).apply {
+            valueFrom = 0f
+            stepSize = 1f
+            setTickVisible(false)
+            setLabelBehavior(2)
+            valueTo = 130f
+            value = ((colorTempKelvin - 2000) / 100).coerceIn(0, 130).toFloat()
             setPadding(48, 0, 48, 16)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    colorTempKelvin = 2000 + progress * 100
-                    tvColorTemp.text = "色温: ${colorTempKelvin}K"
+            addOnChangeListener { _, value, _ ->
+                colorTempKelvin = 2000 + value.toInt() * 100
+                tvColorTemp.text = "色温: ${colorTempKelvin}K"
+                updateColorTempGains()
+            }
+            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) {
+                    colorTempKelvin = 2000 + slider.value.toInt() * 100
                     updateColorTempGains()
+                    showToneMapPreview(tvColorTemp, slider)
                 }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {
-                    colorTempKelvin = 2000 + seekBar.progress * 100
-                    updateColorTempGains()
-                    showToneMapPreview(tvColorTemp, seekBar)
-                }
-                override fun onStopTrackingTouch(seekBar: SeekBar) {
-                    colorTempKelvin = 2000 + seekBar.progress * 100
+                override fun onStopTrackingTouch(slider: Slider) {
+                    colorTempKelvin = 2000 + slider.value.toInt() * 100
                     updateColorTempGains()
                     prefs.edit().putInt("color_temp_kelvin", colorTempKelvin).apply()
                     hideToneMapPreview()
@@ -775,23 +808,27 @@ class MainActivity : AppCompatActivity() {
             textSize = 15f
             setPadding(48, 8, 48, 4)
         }
-        val sbColorTint = SeekBar(this).apply {
-            max = 200
-            progress = (colorTint + 100).coerceIn(0, 200)
+        val sbColorTint = Slider(this).apply {
+            valueFrom = 0f
+            stepSize = 1f
+            setTickVisible(false)
+            setLabelBehavior(2)
+            valueTo = 200f
+            value = (colorTint + 100).coerceIn(0, 200).toFloat()
             setPadding(48, 0, 48, 16)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    colorTint = progress - 100
-                    tvColorTint.text = "色调: ${if (colorTint >= 0) "+$colorTint" else "$colorTint"}"
+            addOnChangeListener { _, value, _ ->
+                colorTint = value.toInt() - 100
+                tvColorTint.text = "色调: ${if (colorTint >= 0) "+$colorTint" else "$colorTint"}"
+                updateColorTempGains()
+            }
+            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) {
+                    colorTint = slider.value.toInt() - 100
                     updateColorTempGains()
+                    showToneMapPreview(tvColorTint, slider)
                 }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {
-                    colorTint = seekBar.progress - 100
-                    updateColorTempGains()
-                    showToneMapPreview(tvColorTint, seekBar)
-                }
-                override fun onStopTrackingTouch(seekBar: SeekBar) {
-                    colorTint = seekBar.progress - 100
+                override fun onStopTrackingTouch(slider: Slider) {
+                    colorTint = slider.value.toInt() - 100
                     updateColorTempGains()
                     prefs.edit().putInt("color_tint", colorTint).apply()
                     hideToneMapPreview()
@@ -804,12 +841,12 @@ class MainActivity : AppCompatActivity() {
         layout.addView(tvColorTint)
         layout.addView(sbColorTint)
 
-        val btnReset = Button(this).apply {
+        val btnReset = MaterialButton(this).apply {
             text = "恢复默认"
             isAllCaps = false
             setPadding(48, 24, 48, 24)
-            setTextColor(0xFFFF6B6B.toInt())
-            setBackgroundColor(0x22FF6B6B.toInt())
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.error))
+            setBackgroundColor(0x22EF9A9A.toInt())
             setOnClickListener {
                 switchDng.isChecked = false
                 applyDng(false)
@@ -817,11 +854,11 @@ class MainActivity : AppCompatActivity() {
                 sbFrameCount.visibility = android.view.View.GONE
                 tvFrameCount.visibility = android.view.View.GONE
                 applyMultiFrame(false, 0)
-                sbWlOffset.progress = 256
+                sbWlOffset.value = 256f
                 tvWlOffset.text = "白电平补偿: 0"
                 glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = 0f }
                 prefs.edit().putInt("white_level_offset", 0).apply()
-                sbToneMapD.progress = 159
+                sbToneMapD.value = 159f
                 tvToneMapD.text = "色调 D（默认0.59）: 0.59"
                 glSurfaceView.queueEvent { pipeline?.toneMapD = 0.59f }
                 prefs.edit().putFloat("tone_map_d", 0.59f).apply()
@@ -836,15 +873,15 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putBoolean("highlight_reconstruction", false).apply()
                 glSurfaceView.queueEvent { pipeline?.highlightReconstructionEnabled = false }
                 // 重置滤镜强度
-                sbLutIntensity.progress = 100
+                sbLutIntensity.value = 100f
                 tvLutIntensity.text = "滤镜强度: 100%"
                 glSurfaceView.queueEvent { pipeline?.lutIntensity = 1f }
                 prefs.edit().putFloat("lut_intensity", 1f).apply()
                 // 重置色温/色调
-                sbColorTemp.progress = 45
+                sbColorTemp.value = 45f
                 colorTempKelvin = 6500
                 tvColorTemp.text = "色温: 6500K"
-                sbColorTint.progress = 100
+                sbColorTint.value = 100f
                 colorTint = 0
                 tvColorTint.text = "色调: 0"
                 updateColorTempGains()
@@ -854,8 +891,9 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(btnReset)
 
+        scrollView.addView(layout)
         settingsDialog = AlertDialog.Builder(this)
-            .setView(layout)
+            .setView(scrollView)
             .setPositiveButton("完成", null)
             .show()
         settingsDialogOriginalBg = settingsDialog?.window?.decorView?.background
@@ -867,7 +905,7 @@ class MainActivity : AppCompatActivity() {
     private var toneMapKeepLabel: android.widget.TextView? = null
     private var toneMapLabelOriginalColor: Int = 0
 
-    private fun showToneMapPreview(keepLabel: android.widget.TextView, keepSlider: android.widget.SeekBar) {
+    private fun showToneMapPreview(keepLabel: android.widget.TextView, keepSlider: Slider) {
         settingsDialog?.window?.let { w ->
             w.setDimAmount(0f)
             w.decorView.background = null
@@ -956,6 +994,7 @@ class MainActivity : AppCompatActivity() {
         private const val HEAVY = 1           // 边界大震 50ms
         private const val TICK = 2             // 调节小震 6ms
         private const val TICK_THROTTLE = 20   // 每差 20 进度震一次（分辨率10000时共~500次）
+        private const val PREVIEW_SCALE = 0.95f  // 预览画面缩放系数
     }
 
     // ================= 启动 / 探测 =================
@@ -977,19 +1016,23 @@ class MainActivity : AppCompatActivity() {
     private fun enterCameraUI(lenses: List<LensInfo>) {
         lensList = lenses.sortedWith(compareBy({ it.lensFacing == CameraMetadata.LENS_FACING_FRONT }, { it.focalLength }))
         lensButtonBar.removeAllViews()
-        val btnHeight = resources.displayMetrics.density.let { (44 * it + 0.5f).toInt() }
-        val btnMargins = resources.displayMetrics.density.let { (4 * it + 0.5f).toInt() }
+        val btnHeight = resources.getDimensionPixelSize(R.dimen.lens_btn_height)
+        val btnMarginH = resources.getDimensionPixelSize(R.dimen.spacing_xs)
+        val cornerRadius = resources.getDimension(R.dimen.corner_medium)
         for (lens in lensList) {
-            val btn = Button(this).apply {
+            val btn = MaterialButton(this).apply {
                 text = if (lens.lensFacing == CameraMetadata.LENS_FACING_FRONT) "自拍"
                        else formatFocalLength(lens.focalLength, lens)
                 isAllCaps = false
                 minimumHeight = 0
+                shapeAppearanceModel = shapeAppearanceModel.toBuilder()
+                    .setAllCornerSizes(cornerRadius)
+                    .build()
                 setTag(lens)
                 setOnClickListener { selectLens(lens) }
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT, btnHeight
-                ).apply { setMargins(btnMargins, 0, btnMargins, 0) }
+                ).apply { setMargins(btnMarginH, 0, btnMarginH, 0) }
             }
             lensButtonBar.addView(btn)
         }
@@ -1005,7 +1048,7 @@ class MainActivity : AppCompatActivity() {
         ensurePermission {
             // 切换镜头时先保存上一支镜头的位置及半自动 AE 收敛值；首次加载（selectedLens==null）不覆盖已存值
             if (selectedLens != null) {
-                LensStore.saveSliderProgress(this, sbShutterSpeed.progress, sbIso.progress,
+                LensStore.saveSliderProgress(this, sbShutterSpeed.value.toInt(), sbIso.value.toInt(),
                     manualController?.iso ?: 100,
                     manualController?.exposureTimeNs ?: ManualController.DEFAULT_EXPOSURE_NS)
             }
@@ -1020,11 +1063,11 @@ class MainActivity : AppCompatActivity() {
             val saved = LensStore.loadSliderProgress(this)
             val shutterPos = (saved?.shutterProgress ?: 0).coerceIn(0, ManualController.SHUTTER_RESOLUTION)
             val isoPos = (saved?.isoProgress ?: 0).coerceIn(0, ManualController.ISO_RESOLUTION)
-            sbShutterSpeed.max = ManualController.SHUTTER_RESOLUTION
-            sbIso.max = ManualController.ISO_RESOLUTION
-            sbShutterSpeed.progress = shutterPos
-            sbIso.progress = isoPos
-            // setProgress 是代码调用（fromUser=false），监听器跳过标签更新，需手动设
+            sbShutterSpeed.valueTo = ManualController.SHUTTER_RESOLUTION.toFloat()
+            sbIso.valueTo = ManualController.ISO_RESOLUTION.toFloat()
+            sbShutterSpeed.value = shutterPos.toFloat()
+            sbIso.value = isoPos.toFloat()
+            // 代码调用 set value（fromUser=false），监听器跳过标签更新，需手动设
             updateLabelForShutter(shutterPos)
             updateLabelForIso(isoPos)
             // ★ 同步 ManualController 状态（isManualExposure / 实际值），
@@ -1054,14 +1097,16 @@ class MainActivity : AppCompatActivity() {
     private fun refreshLensButtonStyles() {
         for (i in 0 until lensButtonBar.childCount) {
             val child = lensButtonBar.getChildAt(i)
-            if (child is Button) {
+            if (child is MaterialButton) {
                 val isSelected = child.tag === selectedLens
                 if (isSelected) {
-                    child.setBackgroundColor(0xFF4A90D9.toInt()) // 蓝色底色
-                    child.setTextColor(0xFFFFFFFF.toInt())
+                    child.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                        ContextCompat.getColor(this, R.color.accent))
+                    child.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
                 } else {
-                    child.setBackgroundColor(0xFF333333.toInt()) // 深灰底色
-                    child.setTextColor(0xFFAAAAAA.toInt())
+                    child.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                        ContextCompat.getColor(this, R.color.surface_light))
+                    child.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
                 }
             }
         }
@@ -1099,12 +1144,17 @@ class MainActivity : AppCompatActivity() {
         val p = pipeline ?: return
         if (p.rawW <= 0 || p.rawH <= 0) return
         val container = glSurfaceView.parent as? View ?: return
-        val width = container.width
-        if (width <= 0) return
-        val lp = container.layoutParams
-        val targetHeight = (width / imageAspect).toInt().coerceAtLeast(1)
-        if (lp.height != targetHeight) {
+        val parentW = (container.parent as? View)?.width ?: container.width
+        if (parentW <= 0) return
+        val lp = container.layoutParams as ViewGroup.MarginLayoutParams
+        val scaledW = (parentW * PREVIEW_SCALE).toInt().coerceAtLeast(1)
+        val marginH = (parentW - scaledW) / 2
+        val targetHeight = (scaledW / imageAspect).toInt().coerceAtLeast(1)
+        if (lp.height != targetHeight || lp.width != scaledW || lp.leftMargin != marginH) {
+            lp.width = scaledW
             lp.height = targetHeight
+            lp.leftMargin = marginH
+            lp.rightMargin = marginH
             container.layoutParams = lp
         }
     }

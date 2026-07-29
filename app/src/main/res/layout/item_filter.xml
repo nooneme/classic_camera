@@ -4,25 +4,25 @@
     android:layout_height="56dp"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:paddingStart="16dp"
-    android:paddingEnd="4dp"
-    android:background="#222222">
+    android:paddingStart="@dimen/spacing_xl"
+    android:paddingEnd="@dimen/spacing_xs"
+    android:background="@color/surface_medium">
 
-    <TextView
+    <com.google.android.material.textview.MaterialTextView
         android:id="@+id/tvFilterName"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
-        android:textColor="#FFFFFF"
-        android:textSize="16sp" />
+        android:textColor="@color/text_primary"
+        android:textSize="@dimen/text_xl" />
 
     <TextView
         android:id="@+id/tvFilterSize"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:textColor="#888888"
-        android:textSize="12sp"
-        android:layout_marginEnd="8dp" />
+        android:textColor="@color/text_tertiary"
+        android:textSize="@dimen/text_body"
+        android:layout_marginEnd="@dimen/spacing_md" />
 
     <TextView
         android:id="@+id/btnVisualize"
@@ -30,8 +30,8 @@
         android:layout_height="36dp"
         android:gravity="center"
         android:text="◎"
-        android:textColor="#4A90D9"
-        android:textSize="14sp"
+        android:textColor="@color/accent"
+        android:textSize="@dimen/text_body_xl"
         android:background="?attr/selectableItemBackgroundBorderless"
         android:visibility="gone" />
 
@@ -41,8 +41,8 @@
         android:layout_height="36dp"
         android:gravity="center"
         android:text="✕"
-        android:textColor="#FF6B6B"
-        android:textSize="16sp"
+        android:textColor="@color/error"
+        android:textSize="@dimen/text_xl"
         android:background="?attr/selectableItemBackgroundBorderless"
         android:visibility="gone" />
 

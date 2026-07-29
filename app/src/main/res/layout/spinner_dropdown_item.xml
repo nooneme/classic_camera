@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <TextView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="48dp"
+    android:layout_height="@dimen/button_height"
     android:gravity="center_vertical"
-    android:paddingHorizontal="16dp"
-    android:textColor="#DDDDDD"
-    android:textSize="14sp"
-    android:background="#333333" />
+    android:paddingHorizontal="@dimen/spacing_xl"
+    android:textColor="@color/text_secondary"
+    android:textSize="@dimen/text_body_xl"
+    android:background="@color/surface_light" />

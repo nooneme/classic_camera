@@ -1081,7 +1081,7 @@ class CameraController(
     /**
      * 动态更新 repeating capture 参数（如手动曝光/ISO）。
      * 可在 session 存活期间反复调用，无需重建 session，下一帧即生效。
-     * 由 MainActivity 的 SeekBar 回调触发。
+     * 由 MainActivity 的 Slider 回调触发。
      */
     fun updateCaptureParams() {
         val s = session ?: return

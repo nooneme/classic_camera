@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 高度 -->
+    <dimen name="toolbar_height">56dp</dimen>
+    <dimen name="button_height">48dp</dimen>
+    <dimen name="button_height_small">44dp</dimen>
+    <dimen name="widget_size">44dp</dimen>
+    <dimen name="shutter_size">72dp</dimen>
+    <dimen name="preview_height">240dp</dimen>
+    <dimen name="upload_area_height">150dp</dimen>
+    <dimen name="upload_area_height_large">200dp</dimen>
+    <dimen name="coverage_height">300dp</dimen>
+    <dimen name="lut_thumb_size">36dp</dimen>
+    <dimen name="lut_thumb_container">52dp</dimen>
+    <dimen name="lens_btn_height">44dp</dimen>
+    <dimen name="curve_editor_height">200dp</dimen>
+    <dimen name="header_visualize">48dp</dimen>
+
+    <!-- 圆角 -->
+    <dimen name="corner_small">2dp</dimen>
+    <dimen name="corner_medium">4dp</dimen>
+    <dimen name="corner_large">8dp</dimen>
+    <dimen name="corner_xlarge">16dp</dimen>
+
+    <!-- 间距 -->
+    <dimen name="spacing_xxs">2dp</dimen>
+    <dimen name="spacing_xs">4dp</dimen>
+    <dimen name="spacing_sm">6dp</dimen>
+    <dimen name="spacing_md">8dp</dimen>
+    <dimen name="spacing_lg">12dp</dimen>
+    <dimen name="spacing_xl">16dp</dimen>
+    <dimen name="spacing_xxl">24dp</dimen>
+    <dimen name="spacing_xxxl">60dp</dimen>
+
+    <!-- 图标 -->
+    <dimen name="icon_size">24dp</dimen>
+    <dimen name="icon_size_large">48dp</dimen>
+    <dimen name="icon_size_small">28dp</dimen>
+
+    <!-- 文字 -->
+    <dimen name="text_xxs">8sp</dimen>
+    <dimen name="text_xs">10sp</dimen>
+    <dimen name="text_sm">11sp</dimen>
+    <dimen name="text_body">12sp</dimen>
+    <dimen name="text_body_lg">13sp</dimen>
+    <dimen name="text_body_xl">14sp</dimen>
+    <dimen name="text_lg">15sp</dimen>
+    <dimen name="text_xl">16sp</dimen>
+    <dimen name="text_xxl">18sp</dimen>
+    <dimen name="text_xxxl">22sp</dimen>
+
+    <!-- Slider -->
+    <dimen name="seekbar_height">4dp</dimen>
+    <dimen name="seekbar_padding_h">48dp</dimen>
+
+    <!-- Border stroke -->
+    <dimen name="border_thin">1dp</dimen>
+    <dimen name="border_medium">2dp</dimen>
+
+    <!-- Shutter button ring -->
+    <dimen name="shutter_ring">4dp</dimen>
+</resources>

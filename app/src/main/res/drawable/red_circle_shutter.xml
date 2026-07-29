@@ -1,21 +1,17 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 经典快门按钮：白色外圈 + 红色内圈 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 外圈（白色边框） -->
     <item>
         <shape android:shape="oval">
-            <solid android:color="#FFFFFF" />
-            <size android:width="72dp" android:height="72dp" />
+            <solid android:color="@color/shutter_outer" />
+            <size android:width="@dimen/shutter_size" android:height="@dimen/shutter_size" />
         </shape>
     </item>
-    <!-- 内圈（红色） -->
     <item
-        android:left="4dp"
-        android:top="4dp"
-        android:right="4dp"
-        android:bottom="4dp">
+        android:left="@dimen/shutter_ring"
+        android:top="@dimen/shutter_ring"
+        android:right="@dimen/shutter_ring"
+        android:bottom="@dimen/shutter_ring">
         <shape android:shape="oval">
-            <solid android:color="#EE3333" />
+            <solid android:color="@color/shutter_inner" />
         </shape>
     </item>
 </layer-list>

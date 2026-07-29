@@ -3,37 +3,37 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:padding="4dp">
+    android:padding="@dimen/spacing_xs">
 
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="180dp">
 
-        <ImageView
+        <com.google.android.material.imageview.ShapeableImageView
             android:id="@+id/ivCover"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:scaleType="centerCrop"
-            android:background="#FF2A2A4A" />
+            android:background="@color/gallery_divider" />
     </FrameLayout>
 
     <TextView
         android:id="@+id/tvFolderName"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textColor="#FFFFFFFF"
-        android:textSize="13sp"
-        android:padding="6dp"
+        android:textColor="@color/text_primary"
+        android:textSize="@dimen/text_body_lg"
+        android:padding="@dimen/spacing_sm"
         android:singleLine="true" />
 
     <TextView
         android:id="@+id/tvPhotoCount"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textColor="#FF888888"
-        android:textSize="11sp"
-        android:paddingStart="6dp"
-        android:paddingEnd="6dp"
-        android:paddingBottom="6dp"
+        android:textColor="@color/text_tertiary"
+        android:textSize="@dimen/text_sm"
+        android:paddingStart="@dimen/spacing_sm"
+        android:paddingEnd="@dimen/spacing_sm"
+        android:paddingBottom="@dimen/spacing_sm"
         android:singleLine="true" />
 </LinearLayout>

@@ -50,25 +50,25 @@ class CurveEditorActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.navigationBarColor = Color.argb(255, 20, 20, 20)
+        window.navigationBarColor = Color.argb(255, 248, 244, 236)
 
         val curve = parseIntentCurve()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.argb(255, 25, 25, 25))
+            setBackgroundColor(Color.argb(255, 248, 244, 236))
         }
 
         titleBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(16, 16, 16, 16)
-            setBackgroundColor(Color.argb(255, 30, 30, 30))
+            setBackgroundColor(Color.argb(255, 253, 248, 240))
         }
 
         val btnBack = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
             setBackgroundColor(Color.TRANSPARENT)
-            setColorFilter(Color.WHITE)
+            setColorFilter(Color.argb(255, 44, 44, 44))
             layoutParams = LinearLayout.LayoutParams(56, 56)
             setOnClickListener { finish() }
         }
@@ -76,7 +76,7 @@ class CurveEditorActivity : AppCompatActivity() {
         val tvTitle = TextView(this).apply {
             text = "色调曲线"
             textSize = 18f
-            setTextColor(Color.WHITE)
+            setTextColor(Color.argb(255, 44, 44, 44))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                 gravity = android.view.Gravity.CENTER_VERTICAL
                 marginStart = 16
@@ -98,7 +98,7 @@ class CurveEditorActivity : AppCompatActivity() {
         val btnApply = TextView(this).apply {
             text = "应用"
             textSize = 14f
-            setTextColor(Color.argb(255, 79, 195, 247))
+            setTextColor(Color.argb(255, 100, 181, 246))
             setPadding(24, 12, 24, 12)
             setBackgroundResource(android.R.drawable.list_selector_background)
             setOnClickListener { applyAndFinish() }
@@ -131,7 +131,7 @@ class CurveEditorActivity : AppCompatActivity() {
                 window.decorView.background = null
                 titleBar.visibility = android.view.View.VISIBLE
                 tvHint.visibility = android.view.View.VISIBLE
-                root.setBackgroundColor(Color.argb(255, 25, 25, 25))
+                root.setBackgroundColor(Color.argb(255, 248, 244, 236))
                 curveView.setBackgroundColor(Color.TRANSPARENT)
             }
         }
@@ -143,10 +143,10 @@ class CurveEditorActivity : AppCompatActivity() {
         tvHint = TextView(this).apply {
             text = "点击曲线添加控制点，拖动控制点调整形状"
             textSize = 12f
-            setTextColor(Color.argb(150, 255, 255, 255))
+            setTextColor(Color.argb(150, 44, 44, 44))
             gravity = android.view.Gravity.CENTER
             setPadding(16, 16, 16, 16)
-            setBackgroundColor(Color.argb(255, 20, 20, 20))
+            setBackgroundColor(Color.argb(255, 253, 248, 240))
         }
         root.addView(tvHint)
 

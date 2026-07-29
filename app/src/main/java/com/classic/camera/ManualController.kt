@@ -6,7 +6,7 @@ import kotlin.math.pow
 /**
  * 手动曝光控制状态与参数。
  *
- * 无极调节（stepless）—— SeekBar progress 以对数曲线连续映射到
+ * 无极调节（stepless）—— Slider value 以对数曲线连续映射到
  * 曝光时间 / ISO 的实际值，没有离散档位。
  *
  * 支持半自动（快门优先 / ISO 优先）——当某一参数为 Auto 时，
@@ -67,7 +67,7 @@ class ManualController {
 
     /**
      * 将快门滑块进度映射到曝光时间（纳秒）。
-     * @param progress SeekBar 进度（0 = Auto, 1~RESOLUTION = 手动范围）
+     * @param progress Slider 进度（0 = Auto, 1~RESOLUTION = 手动范围）
      */
     fun shutterProgressToValue(progress: Int): Long {
         if (progress <= 0) return exposureTimeNs
@@ -106,8 +106,8 @@ class ManualController {
     }
 
     /**
-     * 由 SeekBar 回调调用：更新手动/自动状态和参数值。
-     * @param shutterProgress SeekBar 进度（0 = Auto, 1+ = 手动区）
+     * 由 Slider 回调调用：更新手动/自动状态和参数值。
+     * @param shutterProgress Slider 进度（0 = Auto, 1+ = 手动区）
      * @param isoProgress     ISO 进度
      */
     fun updateFromSliders(shutterProgress: Int, isoProgress: Int) {

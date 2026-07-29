@@ -4,23 +4,23 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:fitsSystemWindows="true"
-    android:background="#FF1A1A2E">
+    android:background="@color/gallery_surface">
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="@dimen/toolbar_height"
         android:gravity="center_vertical"
-        android:paddingHorizontal="16dp"
-        android:background="#FF16213E">
+        android:paddingHorizontal="@dimen/spacing_xl"
+        android:background="@color/gallery_surface_light">
 
         <TextView
             android:id="@+id/btnBack"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="‹ 返回"
-            android:textColor="#FF4A90D9"
-            android:textSize="16sp"
-            android:padding="8dp" />
+            android:textColor="@color/accent"
+            android:textSize="@dimen/text_xl"
+            android:padding="@dimen/spacing_md" />
 
         <TextView
             android:id="@+id/tvTitle"
@@ -28,8 +28,8 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="选择图片"
-            android:textColor="#FFFFFFFF"
-            android:textSize="18sp"
+            android:textColor="@color/text_primary"
+            android:textSize="@dimen/text_xxl"
             android:gravity="center" />
     </LinearLayout>
 
