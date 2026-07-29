@@ -12,6 +12,10 @@ import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.opengl.GLSurfaceView
 import javax.microedition.khronos.egl.EGL10
 import javax.microedition.khronos.egl.EGLConfig
@@ -77,6 +81,11 @@ class MainActivity : AppCompatActivity() {
 
     // 手动曝光控制器
     private var manualController: ManualController? = null
+
+    // 加速度传感器：检测手机朝向
+    private var sensorManager: SensorManager? = null
+    private var accelerometerSensor: Sensor? = null
+    private var deviceOrientation: Int = 0  // 0/90/180/270
 
     /** 滑块调节震动节流：上次震动的 progress 值。 */
     private var lastShutterTick = 0
@@ -298,6 +307,10 @@ class MainActivity : AppCompatActivity() {
 
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
 
+        // 加速度传感器：检测手机朝向（不依赖系统自动旋转开关）
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        accelerometerSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+
         // 初始化手动曝光控制器
         manualController = ManualController()
         setupManualControls()
@@ -339,6 +352,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     startCaptureVibration()
                     val useMulti = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("multi_frame", false)
+                    cameraController?.deviceOrientation = deviceOrientation
 
                     if (useMulti) {
                         cameraController?.startMultiCapture { dngName, jpgName ->
@@ -1135,7 +1149,8 @@ class MainActivity : AppCompatActivity() {
                 }
                 latch.await()
                 it.pendingCaptureLatch = null
-                bitmap // may be null → writeJpeg 跳过 JPEG 保存
+                // 根据手机朝向旋转 JPEG 像素（不依赖 EXIF Orientation）
+                bitmap?.let { bmp -> rotateBitmap(bmp, deviceOrientation) } ?: bitmap
             }
             // GPU 多帧融合处理器（在 GL 线程运行，CountDownLatch 同步）
             val aligner = gpuAlignMerge
@@ -1431,8 +1446,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ---- 加速度传感器：设备朝向检测 ----
+    private val sensorListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            val x = event.values[0]  // 重力 X 分量
+            val y = event.values[1]  // 重力 Y 分量
+            deviceOrientation = when {
+                kotlin.math.abs(x) > kotlin.math.abs(y) -> if (x > 0) 270 else 90
+                else -> if (y > 0) 0 else 180
+            }
+        }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    }
+
     override fun onPause() {
         super.onPause()
+        accelerometerSensor?.let { sensorManager?.unregisterListener(sensorListener) }
         cameraController?.close()
         cameraController = null
         glSurfaceView.onPause()
@@ -1442,6 +1471,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        accelerometerSensor?.let { sensorManager?.registerListener(sensorListener, it, SensorManager.SENSOR_DELAY_UI) }
         glSurfaceView.onResume()
         selectedLens?.let { selectLens(it) }
         loadLutList()

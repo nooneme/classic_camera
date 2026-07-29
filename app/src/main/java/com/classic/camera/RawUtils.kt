@@ -3,6 +3,8 @@ package com.classic.camera
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import android.media.Image
@@ -181,5 +183,17 @@ fun saveBitmapAsJpeg(
         // ignore
     }
     return Pair(displayName, uri)
+}
+
+/**
+ * 将 Bitmap 旋转指定角度（0/90/180/270）。
+ * 用于拍照时根据手机朝向物理旋转 JPEG 输出像素。
+ */
+fun rotateBitmap(source: Bitmap, degrees: Int): Bitmap {
+    if (degrees == 0 || degrees % 360 == 0) return source
+    val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
+    val rotated = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
+    if (rotated !== source) source.recycle()
+    return rotated
 }
 

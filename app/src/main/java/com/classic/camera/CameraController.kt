@@ -86,6 +86,10 @@ class CameraController(
     private var captureCallback: ((dngName: String, jpgName: String, dynamic: Map<String, String>) -> Unit)? = null
     @Volatile private var captureCharacteristics: CameraCharacteristics? = null
 
+    // ---- 拍照时的手机朝向（由 MainActivity 通过加速度传感器设置） ----
+    /** 拍照瞬间的设备朝向：0/90/180/270 度。 */
+    var deviceOrientation: Int = 0
+
     // ---- 多帧合成相关 ----
     /** 多帧合成帧数（默认 1 = 单帧） */
     var multiFrameCount: Int = 4
@@ -780,7 +784,8 @@ class CameraController(
             resolver.openOutputStream(uri)?.use { out: OutputStream ->
                 DngCreator(characteristics, result).apply {
                     val sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
-                    setOrientation(degToExifOrientation(sensorOrientation))
+                    val combinedOrientation = (sensorOrientation + deviceOrientation) % 360
+                    setOrientation(degToExifOrientation(combinedOrientation))
                 }.use { dng ->
                     dng.writeImage(out, image)
                 }
