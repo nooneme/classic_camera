@@ -59,6 +59,7 @@ class ApplyFilterActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applySelectedTheme()
         setContentView(R.layout.activity_apply_filter)
 
         imageArea = findViewById(R.id.imageArea)

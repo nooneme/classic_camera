@@ -33,6 +33,7 @@ class FilterActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applySelectedTheme()
         setContentView(R.layout.activity_filter)
 
         currentFilterPath = intent.getStringExtra("current_filter") ?: ""
@@ -116,10 +117,11 @@ class FilterActivity : AppCompatActivity() {
                 .inflate(R.layout.item_filter, parent, false)
             val item = filterList[pos]
             val isSelected = (item.file?.absolutePath ?: "") == currentFilterPath
-            view.setBackgroundColor(if (isSelected) 0xFF90CAF9.toInt() else 0xFFFFF8F0.toInt())
+            val ctx = this@FilterActivity
+            view.setBackgroundColor(if (isSelected) ctx.getAttrColor(R.attr.surfaceLight) else android.graphics.Color.TRANSPARENT)
             view.findViewById<TextView>(R.id.tvFilterName).text = item.name
             view.findViewById<TextView>(R.id.tvFilterName).setTextColor(
-                if (isSelected) 0xFF2C2C2C.toInt() else 0xFF555555.toInt()
+                if (isSelected) ctx.getAttrColor(R.attr.textPrimary) else ctx.getAttrColor(R.attr.textSecondary)
             )
             val tvSize = view.findViewById<TextView>(R.id.tvFilterSize)
             val btnDelete = view.findViewById<TextView>(R.id.btnDelete)

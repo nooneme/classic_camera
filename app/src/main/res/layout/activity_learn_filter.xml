@@ -3,7 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@color/surface_dark"
+    android:background="?attr/surfaceDark"
     android:fitsSystemWindows="true">
 
     <!-- 标题栏 -->
@@ -13,14 +13,14 @@
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingHorizontal="@dimen/spacing_xl"
-        android:background="@color/surface_medium">
+        android:background="?attr/surfaceMedium">
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="学习滤镜"
-            android:textColor="@color/text_primary"
+            android:textColor="?attr/textPrimary"
             android:textSize="@dimen/text_xxl"
             android:textStyle="bold" />
     </LinearLayout>
@@ -30,7 +30,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text=" 原图"
-        android:textColor="@color/text_tertiary"
+        android:textColor="?attr/textTertiary"
         android:textSize="@dimen/text_body_xl"
         android:paddingHorizontal="@dimen/spacing_xxl"
         android:paddingTop="@dimen/spacing_lg"
@@ -63,7 +63,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="点击选择原图"
-                android:textColor="@color/text_disabled"
+                android:textColor="?attr/textDisabled"
                 android:textSize="@dimen/text_body_xl"
                 android:layout_marginTop="@dimen/spacing_md" />
         </LinearLayout>
@@ -81,7 +81,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text=" 滤镜图"
-        android:textColor="@color/text_tertiary"
+            android:textColor="?attr/textTertiary"
         android:textSize="@dimen/text_body_xl"
         android:paddingHorizontal="@dimen/spacing_xxl"
         android:paddingTop="@dimen/spacing_lg"
@@ -114,7 +114,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="点击选择滤镜图"
-                android:textColor="@color/text_disabled"
+                android:textColor="?attr/textDisabled"
                 android:textSize="@dimen/text_body_xl"
                 android:layout_marginTop="@dimen/spacing_md" />
         </LinearLayout>
@@ -141,17 +141,17 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="拟合方式"
-            android:textColor="@color/text_secondary"
-            android:textSize="@dimen/text_body_xl" />
+        android:textColor="?attr/textSecondary"
+        android:textSize="@dimen/text_body_xl" />
 
-        <Spinner
-            android:id="@+id/spFitMethod"
-            android:layout_width="0dp"
-            android:layout_height="40dp"
-            android:layout_weight="1"
-            android:layout_marginStart="@dimen/spacing_lg"
-            android:backgroundTint="@color/accent"
-            android:popupBackground="@color/surface_light" />
+    <Spinner
+        android:id="@+id/spFitMethod"
+        android:layout_width="0dp"
+        android:layout_height="40dp"
+        android:layout_weight="1"
+        android:layout_marginStart="@dimen/spacing_lg"
+            android:backgroundTint="?attr/accentColor"
+            android:popupBackground="?attr/surfaceLight" />
     </LinearLayout>
 
     <!-- 说明文字 -->
@@ -159,7 +159,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="请选择一张原图和一张原图加上滤镜之后的图片，本次学习将学习到这个滤镜效果"
-        android:textColor="@color/text_secondary"
+        android:textColor="?attr/textSecondary"
         android:textSize="@dimen/text_body_lg"
         android:paddingHorizontal="@dimen/spacing_xxl"
         android:paddingTop="@dimen/spacing_xs"
@@ -181,7 +181,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text=""
-            android:textColor="@color/text_tertiary"
+        android:textColor="?attr/textTertiary"
             android:textSize="@dimen/text_body_xl" />
     </LinearLayout>
 
@@ -191,7 +191,7 @@
         android:layout_height="@dimen/toolbar_height"
         android:orientation="horizontal"
         android:gravity="center"
-        android:background="@color/surface_medium"
+        android:background="?attr/surfaceMedium"
         android:paddingHorizontal="@dimen/spacing_xxl"
         android:paddingVertical="@dimen/spacing_md">
 

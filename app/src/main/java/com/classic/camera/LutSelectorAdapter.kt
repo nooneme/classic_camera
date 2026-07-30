@@ -1,6 +1,8 @@
 package com.classic.camera
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
 import android.view.LayoutInflater
@@ -13,6 +15,7 @@ import java.io.File
 import java.util.concurrent.Executors
 
 class LutSelectorAdapter(
+    private val context: Context,
     private val onItemClick: (LutEntry) -> Unit,
     private val onPhase1Complete: (() -> Unit)? = null
 ) : RecyclerView.Adapter<LutSelectorAdapter.ViewHolder>() {
@@ -25,6 +28,13 @@ class LutSelectorAdapter(
     )
 
     private val items = mutableListOf<LutEntry>()
+
+    private val baseThumbnail: Bitmap? by lazy {
+        try {
+            val bmp = BitmapFactory.decodeStream(context.assets.open("lut_thumb_base.jpg"))
+            Bitmap.createScaledBitmap(bmp, 36, 36, true).also { if (bmp != it) bmp.recycle() }
+        } catch (e: Exception) { null }
+    }
     private val noneEntry = LutEntry("无", null, null, null)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val bgExecutor = Executors.newSingleThreadExecutor()
@@ -73,7 +83,7 @@ class LutSelectorAdapter(
                 val entry = nameOnly[i]
                 val file = entry.file ?: continue
                 val lutData = LutUtils.loadCubeFile(file)
-                val thumb = if (lutData != null) LutThumbnail.generate(lutData, 36) else null
+                val thumb = if (lutData != null) LutThumbnail.generate(lutData, 36, context, file) else null
                 val loaded = entry.copy(lutData = lutData, thumbnail = thumb)
 
                 mainHandler.post {
@@ -100,17 +110,28 @@ class LutSelectorAdapter(
         val isSelected = (entry.file?.absolutePath ?: "") == selectedPath
 
         holder.name.text = entry.name
-        holder.name.setTextColor(if (isSelected) 0xFF2C2C2C.toInt() else 0xFF555555.toInt())
+        holder.name.setTextColor(if (isSelected)
+            holder.itemView.context.getAttrColor(R.attr.textPrimary)
+        else
+            holder.itemView.context.getAttrColor(R.attr.textSecondary))
 
         if (entry.thumbnail != null) {
             holder.thumb.setImageBitmap(entry.thumbnail)
+        } else if (entry.file == null) {
+            holder.thumb.setImageBitmap(baseThumbnail)
         } else {
             holder.thumb.setImageBitmap(null)
-            holder.thumb.setBackgroundColor(0xFFF0F5FF.toInt())
+            holder.thumb.setBackgroundColor(holder.itemView.context.getAttrColor(R.attr.surfaceLight))
         }
 
-        holder.selectedOverlay.visibility = if (isSelected) View.VISIBLE else View.GONE
-        holder.checkMark.visibility = if (isSelected) View.VISIBLE else View.GONE
+        holder.thumbCard.strokeWidth = if (isSelected)
+            holder.itemView.resources.getDimensionPixelSize(R.dimen.border_medium)
+        else
+            0
+        holder.thumbCard.strokeColor = if (isSelected)
+            holder.itemView.context.getAttrColor(R.attr.accentColor)
+        else
+            0
 
         holder.itemView.setOnClickListener {
             // 点击时如果 LUT 数据还没加载完，在主线程同步加载
@@ -119,7 +140,7 @@ class LutSelectorAdapter(
                 data = LutUtils.loadCubeFile(entry.file)
                 val idx = items.indexOfFirst { it.file?.absolutePath == entry.file.absolutePath }
                 if (idx >= 0) {
-                    val thumb = LutThumbnail.generate(data!!, 36)
+                    val thumb = LutThumbnail.generate(data!!, 36, context, entry.file)
                     items[idx] = entry.copy(lutData = data, thumbnail = thumb)
                     notifyItemChanged(idx)
                 }
@@ -133,7 +154,6 @@ class LutSelectorAdapter(
     class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val thumb: ImageView = view.findViewById(R.id.ivLutThumb)
         val name: TextView = view.findViewById(R.id.tvLutName)
-        val selectedOverlay: View = view.findViewById(R.id.selectedOverlay)
-        val checkMark: TextView = view.findViewById(R.id.tvCheckMark)
+        val thumbCard: com.google.android.material.card.MaterialCardView = view.findViewById(R.id.thumbCard)
     }
 }

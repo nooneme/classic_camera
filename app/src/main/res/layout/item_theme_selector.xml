@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="@dimen/lut_thumb_container"
+    android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:layout_gravity="center"
+    android:layout_marginHorizontal="@dimen/spacing_xs"
     android:padding="1dp"
     app:cardCornerRadius="@dimen/corner_medium"
     app:cardBackgroundColor="@android:color/transparent"
@@ -11,38 +12,35 @@
     app:contentPadding="0dp">
 
     <LinearLayout
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:gravity="center">
 
         <com.google.android.material.card.MaterialCardView
-            android:id="@+id/thumbCard"
-            android:layout_width="@dimen/lut_thumb_size"
-            android:layout_height="@dimen/lut_thumb_size"
+            android:id="@+id/themePreviewCard"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
             app:cardCornerRadius="@dimen/corner_medium"
             app:cardBackgroundColor="?attr/surfaceCard"
             app:strokeWidth="0dp"
             app:contentPadding="0dp"
             app:cardElevation="0dp">
 
-            <com.google.android.material.imageview.ShapeableImageView
-                android:id="@+id/ivLutThumb"
+            <LinearLayout
+                android:id="@+id/themeGrid"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:scaleType="centerCrop"
-                android:background="?attr/surfaceCard"
-                app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.ShapeableImageView.Corner" />
+                android:orientation="vertical" />
         </com.google.android.material.card.MaterialCardView>
 
         <TextView
-            android:id="@+id/tvLutName"
-            android:layout_width="match_parent"
+            android:id="@+id/tvThemeName"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:gravity="center"
             android:maxLines="1"
             android:ellipsize="end"
-            android:textSize="@dimen/text_xxs"
+            android:textSize="8sp"
             android:textColor="?attr/textSecondary"
             android:layout_marginTop="1dp" />
 

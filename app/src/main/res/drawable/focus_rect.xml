@@ -2,6 +2,6 @@
     android:shape="rectangle">
     <stroke
         android:width="@dimen/border_medium"
-        android:color="@color/text_primary" />
+        android:color="?attr/surfaceCard" />
     <corners android:radius="@dimen/corner_small" />
 </shape>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <attr name="surfaceDarkest" format="color" />
+    <attr name="surfaceDark" format="color" />
+    <attr name="surfaceMedium" format="color" />
+    <attr name="surfaceLight" format="color" />
+    <attr name="surfaceCard" format="color" />
+    <attr name="textPrimary" format="color" />
+    <attr name="textSecondary" format="color" />
+    <attr name="textTertiary" format="color" />
+    <attr name="textDisabled" format="color" />
+    <attr name="accentColor" format="color" />
+    <attr name="errorColor" format="color" />
+    <attr name="successColor" format="color" />
+    <attr name="shutterOuter" format="color" />
+    <attr name="shutterInner" format="color" />
+    <attr name="overlayLight" format="color" />
+    <attr name="overlayDark" format="color" />
+    <attr name="dividerColor" format="color" />
+    <attr name="dividerDark" format="color" />
+    <attr name="gallerySurface" format="color" />
+    <attr name="gallerySurfaceLight" format="color" />
+    <attr name="galleryDivider" format="color" />
+    <attr name="dialogScrim" format="color" />
+    <attr name="iconPrimary" format="color" />
+    <attr name="iconDisabled" format="color" />
+</resources>

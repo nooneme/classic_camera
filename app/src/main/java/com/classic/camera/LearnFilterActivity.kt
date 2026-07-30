@@ -17,7 +17,7 @@ import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
+
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
 
@@ -85,6 +85,7 @@ class LearnFilterActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applySelectedTheme()
         setContentView(R.layout.activity_learn_filter)
 
         originalImageArea = findViewById(R.id.originalImageArea)
@@ -103,7 +104,7 @@ class LearnFilterActivity : AppCompatActivity() {
         val spinnerAdapter = object : ArrayAdapter<String>(this, R.layout.spinner_dropdown_item, fitMethods) {
             override fun getView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
                 val v = super.getView(position, convertView, parent) as android.widget.TextView
-                v.setTextColor(0xFF2C2C2C.toInt())
+                v.setTextColor(getAttrColor(R.attr.textPrimary))
                 return v
             }
         }
@@ -116,7 +117,7 @@ class LearnFilterActivity : AppCompatActivity() {
                     1 -> "多项式拟合：少量样本即可覆盖全色域"
                     else -> "融合模式：标准拟合优先，空洞用多项式补齐"
                 }
-                tvCoverage.setTextColor(0xFF888888.toInt())
+                tvCoverage.setTextColor(getAttrColor(R.attr.textTertiary))
             }
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
@@ -148,15 +149,15 @@ class LearnFilterActivity : AppCompatActivity() {
         val hasImages = originalUri != null && filterUri != null
         btnAddImages.isEnabled = hasImages && !isAdding
         btnAddImages.backgroundTintList = android.content.res.ColorStateList.valueOf(
-            if (btnAddImages.isEnabled) ContextCompat.getColor(this, R.color.accent) else ContextCompat.getColor(this, R.color.surface_light))
+            if (btnAddImages.isEnabled) getAttrColor(R.attr.accentColor) else getAttrColor(R.attr.surfaceLight))
         btnStartLearn.isEnabled = allOrigPixels.isNotEmpty() && !isLearning
         btnStartLearn.backgroundTintList = android.content.res.ColorStateList.valueOf(
-            if (btnStartLearn.isEnabled) ContextCompat.getColor(this, R.color.accent) else ContextCompat.getColor(this, R.color.surface_light))
+            if (btnStartLearn.isEnabled) getAttrColor(R.attr.accentColor) else getAttrColor(R.attr.surfaceLight))
     }
 
     private fun updatePixelCount() {
         tvCoverage.text = "已累积 ${allOrigPixels.size} 像素"
-        tvCoverage.setTextColor(0xFF888888.toInt())
+        tvCoverage.setTextColor(getAttrColor(R.attr.textTertiary))
     }
 
     private fun addImages() {
@@ -232,7 +233,7 @@ class LearnFilterActivity : AppCompatActivity() {
                             lastLut = outLut
                             val pct = (coverage * 100).toInt()
                             tvCoverage.text = "色彩覆盖率: ${pct}% (已累积 ${allOrigPixels.size} 像素)"
-                            tvCoverage.setTextColor(if (coverage >= 0.3f) 0xFF81C784.toInt() else 0xFFFFA726.toInt())
+                            tvCoverage.setTextColor(if (coverage >= 0.3f) getAttrColor(R.attr.successColor) else 0xFFFFA726.toInt())
                             btnFinishLearn.isEnabled = true
                             CoverageVisualizer.pendingData = outCovered
                             startActivity(android.content.Intent(this@LearnFilterActivity, CoverageVisualizerActivity::class.java))

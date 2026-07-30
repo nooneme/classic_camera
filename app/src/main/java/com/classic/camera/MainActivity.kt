@@ -22,6 +22,7 @@ import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.egl.EGLContext
 import javax.microedition.khronos.egl.EGLDisplay
 import android.net.Uri
+import android.provider.MediaStore
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -114,13 +115,10 @@ class MainActivity : AppCompatActivity() {
                 .putString("current_filter_path", value).apply()
         }
 
-    /** 最后拍摄的照片 URI（为空串表示无照片） */
+    /** 设备上最新一张照片的 URI（为空串表示无照片） */
     private var lastPhotoUri: String = ""
-        set(value) {
-            field = value
-            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-                .putString("last_photo_uri", value).apply()
-        }
+    private var allPhotoUris: List<String> = emptyList()
+    private var currentPhotoIndex: Int = 0
 
     // ---- LUT 选择器 ----
     private lateinit var lutAdapter: LutSelectorAdapter
@@ -158,9 +156,22 @@ class MainActivity : AppCompatActivity() {
 
     /** 权限暂存：用户授予权限后自动继续被中断的操作。 */
     private var pendingPermissionAction: (() -> Unit)? = null
+    private var pendingMediaPermissionAction: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val themePref = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("theme", "classic")
+        when (themePref) {
+            "classic" -> setTheme(R.style.Theme_古法相机)
+            "macaron" -> setTheme(R.style.Theme_古法相机_马卡龙)
+            "vintage" -> setTheme(R.style.Theme_古法相机_纸红复古)
+            "orange" -> setTheme(R.style.Theme_古法相机_橙光奶油)
+            "forest" -> setTheme(R.style.Theme_古法相机_森绿质朴)
+            "berry" -> setTheme(R.style.Theme_古法相机_脏脏莓咖)
+            else -> setTheme(R.style.Theme_古法相机)
+        }
+
         setContentView(R.layout.activity_main)
 
         // 使用中保持屏幕常亮（拍照取景不熄屏）
@@ -225,7 +236,7 @@ class MainActivity : AppCompatActivity() {
         // ---- LUT 选择器初始化 ----
         lutRecyclerView = findViewById(R.id.lutRecyclerView)
         lutRecyclerView.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
-        lutAdapter = LutSelectorAdapter(
+        lutAdapter = LutSelectorAdapter(context = this,
             onItemClick = { entry ->
                 val path = entry.file?.absolutePath ?: ""
                 currentFilterPath = path
@@ -259,7 +270,7 @@ class MainActivity : AppCompatActivity() {
 
         LutUtils.seedPresetFilters(this)
         loadLutList()
-        restoreLastPhotoUri()
+        refreshLatestPhoto()
 
         glSurfaceView.setRenderer(pipeline)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
@@ -325,22 +336,12 @@ class MainActivity : AppCompatActivity() {
             ensurePermission { startDetection() }
         }
 
-        // 最后照片按钮（原滤镜按钮）
         btnLastPhoto.setOnClickListener {
-            if (lastPhotoUri.isEmpty()) {
-                Toast.makeText(this, "还没有拍照片", Toast.LENGTH_SHORT).show()
-            } else {
-                try {
-                    val uri = Uri.parse(lastPhotoUri)
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, "image/jpeg")
-                        flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    }
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    Toast.makeText(this, "无法打开照片", Toast.LENGTH_SHORT).show()
-                }
+            val dialog = PhotoPopupDialog.newInstance(allPhotoUris, currentPhotoIndex)
+            dialog.onPhotoDeleted = {
+                refreshLatestPhoto()
             }
+            dialog.show(supportFragmentManager, "photo_popup")
         }
 
         // 设置按钮
@@ -595,10 +596,48 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // ---- 主题选择 ----
+        val currentTheme = prefs.getString("theme", "classic") ?: "classic"
+        val themes = listOf(
+            ThemeEntry("classic", "经典暖白", intArrayOf(
+                0xFFF8F4EC.toInt(), 0xFF90CAF9.toInt(), 0xFFE57373.toInt(), 0xFF2C2C2C.toInt()
+            )),
+            ThemeEntry("macaron", "马卡龙", intArrayOf(
+                0xFFA3CEC5.toInt(), 0xFFE2A3B4.toInt(), 0xFFA2BEE3.toInt(), 0xFF3D3A3A.toInt()
+            )),
+            ThemeEntry("vintage", "纸红复古", intArrayOf(
+                0xFFF1E6D8.toInt(), 0xFFAA2B3A.toInt(), 0xFF28314E.toInt(), 0xFF1A1520.toInt()
+            )),
+            ThemeEntry("orange", "橙光奶油", intArrayOf(
+                0xFFFAEDD1.toInt(), 0xFFF4520D.toInt(), 0xFF1387C0.toInt(), 0xFF1A1A2E.toInt()
+            )),
+            ThemeEntry("forest", "森绿质朴", intArrayOf(
+                0xFFFAF3E9.toInt(), 0xFFA8703F.toInt(), 0xFF5C614D.toInt(), 0xFF1A1A15.toInt()
+            )),
+            ThemeEntry("berry", "脏脏莓咖", intArrayOf(
+                0xFF6D6975.toInt(), 0xFFE59A9B.toInt(), 0xFFB6828D.toInt(), 0xFFF0E8EC.toInt()
+            )),
+        )
+        val tvThemeLabel = TextView(this).apply {
+            text = "主题"
+            textSize = 16f
+            setPadding(48, 24, 48, 8)
+        }
+        val themeRecyclerView = RecyclerView(this).apply {
+            layoutManager = LinearLayoutManager(this@MainActivity, LinearLayoutManager.HORIZONTAL, false)
+            adapter = ThemeSelectorAdapter(themes, currentTheme) { entry ->
+                prefs.edit().putString("theme", entry.id).apply()
+                recreate()
+            }
+            isNestedScrollingEnabled = false
+        }
+
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 16, 48, 16)
         }
+        layout.addView(tvThemeLabel)
+        layout.addView(themeRecyclerView)
         layout.addView(switchDng)
         layout.addView(switchMultiFrame)
         layout.addView(tvFrameCount)
@@ -845,7 +884,7 @@ class MainActivity : AppCompatActivity() {
             text = "恢复默认"
             isAllCaps = false
             setPadding(48, 24, 48, 24)
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.error))
+            setTextColor(getAttrColor(R.attr.errorColor))
             setBackgroundColor(0x22EF9A9A.toInt())
             setOnClickListener {
                 switchDng.isChecked = false
@@ -896,6 +935,11 @@ class MainActivity : AppCompatActivity() {
             .setView(scrollView)
             .setPositiveButton("完成", null)
             .show()
+        settingsDialog?.window?.setBackgroundDrawableResource(R.drawable.dialog_settings_bg)
+        settingsDialog?.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.9).toInt(),
+            (resources.displayMetrics.heightPixels * 0.85).toInt()
+        )
         settingsDialogOriginalBg = settingsDialog?.window?.decorView?.background
         settingsLayoutChildren.clear()
         for (i in 0 until layout.childCount) settingsLayoutChildren.add(layout.getChildAt(i))
@@ -940,11 +984,28 @@ class MainActivity : AppCompatActivity() {
 
     // ================= 最后照片按钮 =================
 
-    /** 恢复最后照片 URI 并更新按钮图标。 */
-    private fun restoreLastPhotoUri() {
-        lastPhotoUri = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString("last_photo_uri", "") ?: ""
+    /** 从 MediaStore 查询所有照片并更新按钮。 */
+    private fun refreshLatestPhoto() {
+        try {
+            val baseUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
+            val ids = mutableListOf<Long>()
+            contentResolver.query(baseUri, arrayOf(MediaStore.Images.Media._ID), null, null, sortOrder)?.use { cur ->
+                while (cur.moveToNext()) {
+                    ids.add(cur.getLong(0))
+                }
+            }
+            allPhotoUris = ids.map { Uri.withAppendedPath(baseUri, it.toString()).toString() }
+            currentPhotoIndex = 0
+            lastPhotoUri = allPhotoUris.firstOrNull() ?: ""
+        } catch (_: Exception) {
+            allPhotoUris = emptyList()
+            lastPhotoUri = ""
+        }
         refreshLastPhotoButton()
+        val hasPhotos = allPhotoUris.isNotEmpty()
+        btnLastPhoto.isEnabled = hasPhotos
+        btnLastPhoto.alpha = if (hasPhotos) 1f else 0.35f
     }
 
     /** 根据 lastPhotoUri 更新按钮图标。 */
@@ -952,6 +1013,7 @@ class MainActivity : AppCompatActivity() {
         if (lastPhotoUri.isEmpty()) {
             btnLastPhoto.setImageResource(R.drawable.ic_photo)
             btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.CENTER
+            btnLastPhoto.background = ContextCompat.getDrawable(this, R.drawable.btn_icon_md_bg)
         } else {
             try {
                 val uri = Uri.parse(lastPhotoUri)
@@ -974,18 +1036,21 @@ class MainActivity : AppCompatActivity() {
                     bmp = BitmapFactory.decodeFileDescriptor(pfd.fileDescriptor, null, opts)
                 }
                 if (bmp != null) {
-                    val thumb = Bitmap.createScaledBitmap(bmp, targetSize, targetSize, true)
-                    btnLastPhoto.setImageBitmap(thumb)
-                    btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-                    if (bmp !== thumb) bmp.recycle()
+                    val rounded = androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(resources, bmp)
+                    rounded.cornerRadius = (8 * resources.displayMetrics.density + 0.5f)
+                    btnLastPhoto.setImageDrawable(rounded)
+                    btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                    btnLastPhoto.background = null
                 } else {
                     btnLastPhoto.setImageResource(R.drawable.ic_photo)
                     btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.CENTER
+                    btnLastPhoto.background = ContextCompat.getDrawable(this, R.drawable.btn_icon_md_bg)
                 }
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "Failed to load photo thumbnail", e)
                 btnLastPhoto.setImageResource(R.drawable.ic_photo)
                 btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.CENTER
+                btnLastPhoto.background = ContextCompat.getDrawable(this, R.drawable.btn_icon_md_bg)
             }
         }
     }
@@ -1101,12 +1166,12 @@ class MainActivity : AppCompatActivity() {
                 val isSelected = child.tag === selectedLens
                 if (isSelected) {
                     child.backgroundTintList = android.content.res.ColorStateList.valueOf(
-                        ContextCompat.getColor(this, R.color.accent))
-                    child.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
+                        getAttrColor(R.attr.accentColor))
+                    child.setTextColor(getAttrColor(R.attr.iconPrimary))
                 } else {
                     child.backgroundTintList = android.content.res.ColorStateList.valueOf(
-                        ContextCompat.getColor(this, R.color.surface_light))
-                    child.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+                        getAttrColor(R.attr.surfaceLight))
+                    child.setTextColor(getAttrColor(R.attr.iconPrimary))
                 }
             }
         }
@@ -1172,6 +1237,7 @@ class MainActivity : AppCompatActivity() {
                     lastPhotoUri = uri.toString()
                     runOnUiThread { refreshLastPhotoButton() }
                 }
+                runOnUiThread { ensureMediaPermission { refreshLatestPhoto() } }
             }
             it.saveDng = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("save_dng", true)
             val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -1478,6 +1544,19 @@ class MainActivity : AppCompatActivity() {
         ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 101)
     }
 
+    private fun ensureMediaPermission(action: () -> Unit) {
+        val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+            Manifest.permission.READ_MEDIA_IMAGES
+        else
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        if (ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED) {
+            action()
+        } else {
+            pendingMediaPermissionAction = action
+            ActivityCompat.requestPermissions(this, arrayOf(perm), 102)
+        }
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 101 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
@@ -1490,9 +1569,18 @@ class MainActivity : AppCompatActivity() {
                 // 无 pending 且无镜头（首次启动），走探测
                 startDetection()
             }
+        } else if (requestCode == 102 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            val pending = pendingMediaPermissionAction
+            pendingMediaPermissionAction = null
+            pending?.invoke()
         } else {
-            pendingPermissionAction = null
-            Toast.makeText(this, "相机权限是必需的", Toast.LENGTH_SHORT).show()
+            if (requestCode == 101) {
+                pendingPermissionAction = null
+                Toast.makeText(this, "相机权限是必需的", Toast.LENGTH_SHORT).show()
+            } else if (requestCode == 102) {
+                pendingMediaPermissionAction = null
+                Toast.makeText(this, "需要存储权限才能访问照片", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -1525,6 +1613,7 @@ class MainActivity : AppCompatActivity() {
         glSurfaceView.onResume()
         selectedLens?.let { selectLens(it) }
         loadLutList()
+        refreshLatestPhoto()
     }
 
     override fun onDestroy() {

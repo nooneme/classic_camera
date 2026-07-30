@@ -4,21 +4,21 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:fitsSystemWindows="true"
-    android:background="@color/gallery_surface">
+    android:background="?attr/gallerySurface">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="@dimen/toolbar_height"
         android:gravity="center_vertical"
         android:paddingHorizontal="@dimen/spacing_xl"
-        android:background="@color/gallery_surface_light">
+        android:background="?attr/gallerySurfaceLight">
 
         <TextView
             android:id="@+id/btnBack"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="‹ 返回"
-            android:textColor="@color/accent"
+            android:textColor="?attr/accentColor"
             android:textSize="@dimen/text_xl"
             android:padding="@dimen/spacing_md" />
 
@@ -28,7 +28,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="选择图片"
-            android:textColor="@color/text_primary"
+            android:textColor="?attr/textPrimary"
             android:textSize="@dimen/text_xxl"
             android:gravity="center" />
     </LinearLayout>

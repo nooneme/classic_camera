@@ -1,7 +1,7 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:id="@android:id/background">
         <shape>
-            <solid android:color="@color/surface_light" />
+            <solid android:color="?attr/surfaceLight" />
             <corners android:radius="@dimen/corner_small" />
             <size android:height="@dimen/seekbar_height" />
         </shape>
@@ -9,7 +9,7 @@
     <item android:id="@android:id/progress">
         <clip>
             <shape>
-                <solid android:color="@color/accent" />
+                <solid android:color="?attr/accentColor" />
                 <corners android:radius="@dimen/corner_small" />
             </shape>
         </clip>

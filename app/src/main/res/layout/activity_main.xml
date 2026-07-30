@@ -4,14 +4,14 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@color/surface_darkest">
+    android:background="?attr/surfaceDarkest">
 
     <!-- 顶部 spacer：吸收剩余空间，将内容推到底部 -->
     <View
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:background="@color/surface_darkest" />
+        android:background="?attr/surfaceDarkest" />
 
     <!-- 预览区：GLSurfaceView + 对焦指示器叠加层 -->
     <FrameLayout
@@ -42,7 +42,7 @@
         android:gravity="center_vertical"
         android:paddingHorizontal="@dimen/spacing_xl"
         android:paddingVertical="@dimen/spacing_xs"
-        android:background="@color/surface_medium">
+        android:background="?attr/surfaceDarkest">
 
         <TextView
             android:id="@+id/tvStatusShutter"
@@ -50,7 +50,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="快门 --"
-            android:textColor="@color/text_secondary"
+            android:textColor="?attr/textSecondary"
             android:textSize="@dimen/text_body" />
 
         <TextView
@@ -59,7 +59,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="ISO --"
-            android:textColor="@color/text_secondary"
+            android:textColor="?attr/textSecondary"
             android:textSize="@dimen/text_body"
             android:gravity="center" />
 
@@ -69,7 +69,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="滤镜: 无"
-            android:textColor="@color/text_secondary"
+            android:textColor="?attr/textSecondary"
             android:textSize="@dimen/text_body"
             android:gravity="end"
             android:maxLines="1"
@@ -85,9 +85,9 @@
         android:gravity="center_vertical"
         android:paddingHorizontal="@dimen/spacing_lg"
         android:paddingVertical="@dimen/spacing_xxs"
-        android:background="@color/surface_dark">
+        android:background="?attr/surfaceMedium">
 
-        <!-- 左半：快门速度 -->
+            <!-- 左半：快门速度 -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -105,7 +105,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="快门 "
-                    android:textColor="@color/text_tertiary"
+                    android:textColor="?attr/textTertiary"
                     android:textSize="@dimen/text_sm" />
 
                 <TextView
@@ -113,7 +113,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Auto"
-                    android:textColor="@color/text_primary"
+                    android:textColor="?attr/textPrimary"
                     android:textSize="@dimen/text_body_lg"
                     android:textStyle="bold" />
             </LinearLayout>
@@ -128,7 +128,7 @@
         <View
             android:layout_width="1dp"
             android:layout_height="28dp"
-            android:background="@color/divider"
+            android:background="?attr/dividerColor"
             android:layout_marginHorizontal="@dimen/spacing_lg" />
 
         <!-- 右半：ISO -->
@@ -149,7 +149,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="ISO "
-                    android:textColor="@color/text_tertiary"
+                    android:textColor="?attr/textTertiary"
                     android:textSize="@dimen/text_sm" />
 
                 <TextView
@@ -157,7 +157,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Auto"
-                    android:textColor="@color/text_primary"
+                    android:textColor="?attr/textPrimary"
                     android:textSize="@dimen/text_body_lg"
                     android:textStyle="bold" />
             </LinearLayout>
@@ -175,7 +175,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingVertical="@dimen/spacing_sm"
-        android:background="@color/surface_medium">
+        android:background="?attr/surfaceMedium">
 
         <ImageButton
             android:id="@+id/btnLastPhoto"
@@ -199,9 +199,9 @@
             android:minWidth="0dp"
             android:minHeight="0dp"
             app:cornerRadius="36dp"
-            app:backgroundTint="@color/shutter_inner"
+            app:backgroundTint="?attr/shutterInner"
             app:strokeWidth="0dp"
-            app:rippleColor="@color/overlay_light"
+            app:rippleColor="?attr/overlayLight"
             android:contentDescription="拍照" />
 
         <ImageButton
@@ -225,7 +225,7 @@
         android:gravity="center_vertical"
         android:paddingHorizontal="@dimen/spacing_md"
         android:paddingVertical="@dimen/spacing_xs"
-        android:background="@color/surface_dark">
+        android:background="?attr/surfaceMedium">
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/lutRecyclerView"
@@ -254,7 +254,7 @@
         android:scrollbars="none"
         android:clipToPadding="false"
         android:paddingHorizontal="@dimen/spacing_xs"
-        android:background="@color/surface_medium">
+        android:background="?attr/surfaceMedium">
 
         <LinearLayout
             android:id="@+id/lensButtonBar"

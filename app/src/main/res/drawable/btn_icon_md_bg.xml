@@ -1,8 +1,8 @@
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
-    android:color="@color/overlay_light">
+    android:color="?attr/overlayLight">
     <item>
         <shape android:shape="oval">
-            <solid android:color="@color/surface_light" />
+            <solid android:color="?attr/surfaceLight" />
         </shape>
     </item>
 </ripple>

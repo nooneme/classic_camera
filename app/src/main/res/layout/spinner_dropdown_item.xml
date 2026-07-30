@@ -4,6 +4,6 @@
     android:layout_height="@dimen/button_height"
     android:gravity="center_vertical"
     android:paddingHorizontal="@dimen/spacing_xl"
-    android:textColor="@color/text_secondary"
+    android:textColor="?attr/textSecondary"
     android:textSize="@dimen/text_body_xl"
-    android:background="@color/surface_light" />
+    android:background="?attr/surfaceLight" />

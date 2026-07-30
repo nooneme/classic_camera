@@ -1,7 +1,7 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="oval">
-            <solid android:color="@color/shutter_outer" />
+            <solid android:color="?attr/shutterOuter" />
             <size android:width="@dimen/shutter_size" android:height="@dimen/shutter_size" />
         </shape>
     </item>
@@ -11,7 +11,7 @@
         android:right="@dimen/shutter_ring"
         android:bottom="@dimen/shutter_ring">
         <shape android:shape="oval">
-            <solid android:color="@color/shutter_inner" />
+            <solid android:color="?attr/shutterInner" />
         </shape>
     </item>
 </layer-list>

@@ -1,6 +1,6 @@
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="?attr/surfaceCard" />
-    <stroke android:width="@dimen/border_thin" android:color="?attr/dividerColor" />
+    <solid android:color="@android:color/transparent" />
+    <stroke android:width="@dimen/border_medium" android:color="?attr/accentColor" />
     <corners android:radius="@dimen/corner_medium" />
 </shape>

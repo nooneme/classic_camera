@@ -1,5 +1,5 @@
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <solid android:color="@color/surface_card" />
-    <stroke android:width="@dimen/border_thin" android:color="@color/divider" />
+    <solid android:color="?attr/surfaceCard" />
+    <stroke android:width="@dimen/border_thin" android:color="?attr/dividerColor" />
     <corners android:radius="@dimen/corner_large" />
 </shape>

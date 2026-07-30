@@ -14,14 +14,14 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:scaleType="centerCrop"
-            android:background="@color/gallery_divider" />
+            android:background="?attr/galleryDivider" />
     </FrameLayout>
 
     <TextView
         android:id="@+id/tvFolderName"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textColor="@color/text_primary"
+        android:textColor="?attr/textPrimary"
         android:textSize="@dimen/text_body_lg"
         android:padding="@dimen/spacing_sm"
         android:singleLine="true" />
@@ -30,7 +30,7 @@
         android:id="@+id/tvPhotoCount"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textColor="@color/text_tertiary"
+        android:textColor="?attr/textTertiary"
         android:textSize="@dimen/text_sm"
         android:paddingStart="@dimen/spacing_sm"
         android:paddingEnd="@dimen/spacing_sm"

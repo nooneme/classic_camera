@@ -19,7 +19,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="3D 向量场"
-            android:textColor="@color/text_primary"
+            android:textColor="?attr/textPrimary"
             android:textSize="@dimen/text_xl"
             android:textStyle="bold" />
 
@@ -28,7 +28,7 @@
             android:layout_width="36dp"
             android:layout_height="36dp"
             android:text="×"
-            android:textColor="@color/text_primary"
+            android:textColor="?attr/textPrimary"
             android:textSize="@dimen/text_xxxl"
             android:gravity="center"
             android:clickable="true"
@@ -47,7 +47,7 @@
         android:layout_height="wrap_content"
         android:padding="@dimen/spacing_lg"
         android:text="每条线段：起点=原色，终点=映射色，方向=偏移量。拖拽旋转"
-        android:textColor="@color/text_tertiary"
+        android:textColor="?attr/textTertiary"
         android:textSize="@dimen/text_body"
         android:gravity="center" />
 

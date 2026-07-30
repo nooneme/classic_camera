@@ -1,34 +1,78 @@
 package com.classic.camera
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
-import kotlin.random.Random
+import java.io.File
+import java.security.MessageDigest
 
 object LutThumbnail {
 
-    private var sessionR = Random.nextFloat()
-    private var sessionG = Random.nextFloat()
-    private var sessionB = Random.nextFloat()
+    private var baseBitmap: Bitmap? = null
+    private var cacheDir: File? = null
 
-    fun resetSession() {
-        sessionR = Random.nextFloat()
-        sessionG = Random.nextFloat()
-        sessionB = Random.nextFloat()
+    private fun getBaseBitmap(context: Context, size: Int): Bitmap {
+        baseBitmap?.let {
+            if (it.width == size && it.height == size) return it
+        }
+        val bmp = BitmapFactory.decodeStream(
+            context.assets.open("lut_thumb_base.jpg")
+        ) ?: throw IllegalStateException("Cannot load lut_thumb_base.jpg from assets")
+        val scaled = Bitmap.createScaledBitmap(bmp, size, size, true)
+        if (bmp != scaled) bmp.recycle()
+        baseBitmap = scaled
+        return scaled
     }
 
-    fun generate(lut: FloatArray, size: Int): Bitmap {
-        val outR = lookupLutChannel(lut, 33, sessionR, sessionG, sessionB, 0)
-        val outG = lookupLutChannel(lut, 33, sessionR, sessionG, sessionB, 1)
-        val outB = lookupLutChannel(lut, 33, sessionR, sessionG, sessionB, 2)
-        val color = Color.rgb(
-            (outR * 255).toInt().coerceIn(0, 255),
-            (outG * 255).toInt().coerceIn(0, 255),
-            (outB * 255).toInt().coerceIn(0, 255)
-        )
-        val px = IntArray(size * size) { color }
-        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        bmp.setPixels(px, 0, size, 0, 0, size, size)
-        return bmp
+    private fun getCacheDir(context: Context): File {
+        val dir = cacheDir ?: File(context.cacheDir, "lut_thumbs").also { cacheDir = it }
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    private fun cacheKey(lutFile: File): String {
+        val digest = MessageDigest.getInstance("MD5")
+        val hash = digest.digest(lutFile.absolutePath.toByteArray())
+        return hash.joinToString("") { "%02x".format(it) }
+    }
+
+    fun generate(lut: FloatArray, size: Int, context: Context, lutFile: File? = null): Bitmap {
+        if (lutFile != null) {
+            val cache = File(getCacheDir(context), "${cacheKey(lutFile)}.png")
+            if (cache.exists()) {
+                val cached = BitmapFactory.decodeFile(cache.absolutePath)
+                if (cached != null) return cached
+            }
+        }
+
+        val base = getBaseBitmap(context, size)
+        val pixels = IntArray(size * size)
+        base.getPixels(pixels, 0, size, 0, 0, size, size)
+
+        for (i in pixels.indices) {
+            val argb = pixels[i]
+            val r = Color.red(argb)
+            val g = Color.green(argb)
+            val b = Color.blue(argb)
+            val outR = lookupLutChannel(lut, 33, r / 255f, g / 255f, b / 255f, 0)
+            val outG = lookupLutChannel(lut, 33, r / 255f, g / 255f, b / 255f, 1)
+            val outB = lookupLutChannel(lut, 33, r / 255f, g / 255f, b / 255f, 2)
+            pixels[i] = Color.rgb(
+                (outR * 255).toInt().coerceIn(0, 255),
+                (outG * 255).toInt().coerceIn(0, 255),
+                (outB * 255).toInt().coerceIn(0, 255)
+            )
+        }
+
+        val result = Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
+
+        if (lutFile != null) {
+            val cache = File(getCacheDir(context), "${cacheKey(lutFile)}.png")
+            cache.outputStream().use { result.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
+
+        return result
     }
 
     private fun lookupLutChannel(lut: FloatArray, lutSize: Int,
@@ -64,5 +108,9 @@ object LutThumbnail {
         val c0 = c00 * (1 - dy) + c10 * dy
         val c1 = c01 * (1 - dy) + c11 * dy
         return c0 * (1 - dz) + c1 * dz
+    }
+
+    fun resetSession() {
+        // no longer needed — using fixed base image
     }
 }

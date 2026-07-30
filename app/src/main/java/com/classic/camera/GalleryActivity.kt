@@ -53,6 +53,7 @@ class GalleryActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applySelectedTheme()
         setContentView(R.layout.activity_gallery)
 
         recyclerView = findViewById(R.id.recyclerView)

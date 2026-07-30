@@ -3,7 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@color/surface_dark"
+    android:background="?attr/surfaceDark"
     android:fitsSystemWindows="true">
 
     <LinearLayout
@@ -12,13 +12,13 @@
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingHorizontal="@dimen/spacing_xl"
-        android:background="@color/surface_medium">
+        android:background="?attr/surfaceMedium">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="滤镜"
-            android:textColor="@color/text_primary"
+            android:textColor="?attr/textPrimary"
             android:textSize="@dimen/text_xxl"
             android:textStyle="bold" />
     </LinearLayout>
@@ -30,7 +30,7 @@
         android:layout_weight="1"
         android:gravity="center"
         android:text="暂无滤镜，点击下方「新建」开始学习"
-        android:textColor="@color/text_tertiary"
+        android:textColor="?attr/textTertiary"
         android:textSize="@dimen/text_body_xl"
         android:visibility="gone" />
 
@@ -39,7 +39,7 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:divider="@color/divider_dark"
+        android:divider="?attr/dividerDark"
         android:dividerHeight="1dp"
         android:padding="@dimen/spacing_md" />
 
@@ -48,7 +48,7 @@
         android:layout_height="@dimen/toolbar_height"
         android:orientation="horizontal"
         android:gravity="center"
-        android:background="@color/surface_medium"
+        android:background="?attr/surfaceMedium"
         android:paddingHorizontal="@dimen/spacing_xxl"
         android:paddingVertical="@dimen/spacing_md">
 
