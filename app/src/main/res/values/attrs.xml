@@ -10,6 +10,7 @@
     <attr name="textTertiary" format="color" />
     <attr name="textDisabled" format="color" />
     <attr name="accentColor" format="color" />
+    <attr name="onAccentColor" format="color" />
     <attr name="errorColor" format="color" />
     <attr name="successColor" format="color" />
     <attr name="shutterOuter" format="color" />

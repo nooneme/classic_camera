@@ -16,10 +16,12 @@ fun AppCompatActivity.applySelectedTheme() {
         .getString("theme", "classic") ?: "classic"
     val styleRes = when (themePref) {
         "macaron" -> R.style.Theme_古法相机_马卡龙
-        "vintage" -> R.style.Theme_古法相机_纸红复古
-        "orange" -> R.style.Theme_古法相机_橙光奶油
-        "forest" -> R.style.Theme_古法相机_森绿质朴
         "berry" -> R.style.Theme_古法相机_脏脏莓咖
+        "mint" -> R.style.Theme_古法相机_蜜桃薄荷
+        "sakura" -> R.style.Theme_古法相机_夜樱
+        "blossom" -> R.style.Theme_古法相机_浅樱
+        "graphite" -> R.style.Theme_古法相机_石墨
+        "wine" -> R.style.Theme_古法相机_醉莓
         else -> R.style.Theme_古法相机
     }
     setTheme(styleRes)

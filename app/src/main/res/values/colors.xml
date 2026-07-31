@@ -2,42 +2,6 @@
 <resources>
     <!-- 语义化颜色系统 - 浅色系: 奶白色 / 嫩黄色 / 淡蓝色 -->
 
-    <!-- ========== 纸红复古主题色 ========== -->
-    <color name="vintage_surface_darkest">#FFF1E6D8</color>
-    <color name="vintage_surface_dark">#FFEEDDD0</color>
-    <color name="vintage_surface_medium">#FFE8D4C2</color>
-    <color name="vintage_surface_light">#FF28314E</color>
-    <color name="vintage_surface_card">#FFF8F0E4</color>
-
-    <color name="vintage_text_primary">#FF1A1520</color>
-    <color name="vintage_text_secondary">#FF3D3545</color>
-    <color name="vintage_text_tertiary">#FF6E6575</color>
-    <color name="vintage_text_disabled">#FFB0AAB5</color>
-
-    <color name="vintage_accent">#FFAA2B3A</color>
-    <color name="vintage_accent_container">#22AA2B3A</color>
-
-    <color name="vintage_error">#FFAA2B3A</color>
-    <color name="vintage_success">#FF6B8F71</color>
-
-    <color name="vintage_shutter_outer">#FFD8CCC0</color>
-    <color name="vintage_shutter_inner">#FFAA2B3A</color>
-
-    <color name="vintage_overlay_light">#44FFFFFF</color>
-    <color name="vintage_overlay_dark">#22000000</color>
-
-    <color name="vintage_divider">#FFD8CFC0</color>
-    <color name="vintage_divider_dark">#FFC8BFB0</color>
-
-    <color name="vintage_gallery_surface">#FFF1E6D8</color>
-    <color name="vintage_gallery_surface_light">#FFEDDFD0</color>
-    <color name="vintage_gallery_divider">#FFD8CFC0</color>
-
-    <color name="vintage_dialog_scrim">#44000000</color>
-
-    <color name="vintage_icon_primary">#FFE8D4C2</color>
-    <color name="vintage_icon_disabled">#FFB0AAB5</color>
-
     <!-- ========== 脏脏莓咖主题色（深色系） ========== -->
     <color name="berry_surface_darkest">#FF1E1A22</color>
     <color name="berry_surface_dark">#FF2A2530</color>
@@ -74,83 +38,11 @@
     <color name="berry_icon_primary">#FFF0E8EC</color>
     <color name="berry_icon_disabled">#FF5E5660</color>
 
-    <!-- ========== 森绿质朴主题色 ========== -->
-    <color name="forest_surface_darkest">#FFFAF3E9</color>
-    <color name="forest_surface_dark">#FFF5EBD9</color>
-    <color name="forest_surface_medium">#FFEDE0CC</color>
-    <color name="forest_surface_light">#FFA8703F</color>
-    <color name="forest_surface_card">#FFFAF5ED</color>
-
-    <color name="forest_text_primary">#FF1A1A15</color>
-    <color name="forest_text_secondary">#FF3D3830</color>
-    <color name="forest_text_tertiary">#FF6E6558</color>
-    <color name="forest_text_disabled">#FFB0A898</color>
-
-    <color name="forest_accent">#FF5C614D</color>
-    <color name="forest_accent_container">#225C614D</color>
-
-    <color name="forest_error">#FFB25050</color>
-    <color name="forest_success">#FF6B9F6B</color>
-
-    <color name="forest_shutter_outer">#FFD8CDB8</color>
-    <color name="forest_shutter_inner">#FF5C614D</color>
-
-    <color name="forest_overlay_light">#44FFFFFF</color>
-    <color name="forest_overlay_dark">#22000000</color>
-
-    <color name="forest_divider">#FFD8CDB8</color>
-    <color name="forest_divider_dark">#FFC8BDA8</color>
-
-    <color name="forest_gallery_surface">#FFFAF3E9</color>
-    <color name="forest_gallery_surface_light">#FFF5EBD9</color>
-    <color name="forest_gallery_divider">#FFD8CDB8</color>
-
-    <color name="forest_dialog_scrim">#44000000</color>
-
-    <color name="forest_icon_primary">#FFFFFFFF</color>
-    <color name="forest_icon_disabled">#FFB0A898</color>
-
-    <!-- ========== 橙光奶油主题色 ========== -->
-    <color name="orange_surface_darkest">#FFFAEDD1</color>
-    <color name="orange_surface_dark">#FFF5E5C5</color>
-    <color name="orange_surface_medium">#FFEEDAB8</color>
-    <color name="orange_surface_light">#FF1387C0</color>
-    <color name="orange_surface_card">#FFF8F0DC</color>
-
-    <color name="orange_text_primary">#FF1A1A2E</color>
-    <color name="orange_text_secondary">#FF3D3D50</color>
-    <color name="orange_text_tertiary">#FF6E6E80</color>
-    <color name="orange_text_disabled">#FFB0B0BC</color>
-
-    <color name="orange_accent">#FFF4520D</color>
-    <color name="orange_accent_container">#22F4520D</color>
-
-    <color name="orange_error">#FFF4520D</color>
-    <color name="orange_success">#FF66BB6A</color>
-
-    <color name="orange_shutter_outer">#FFD5C8A8</color>
-    <color name="orange_shutter_inner">#FFF4520D</color>
-
-    <color name="orange_overlay_light">#44FFFFFF</color>
-    <color name="orange_overlay_dark">#22000000</color>
-
-    <color name="orange_divider">#FFD8CDB8</color>
-    <color name="orange_divider_dark">#FFC8BDA8</color>
-
-    <color name="orange_gallery_surface">#FFFAEDD1</color>
-    <color name="orange_gallery_surface_light">#FFF5E5C5</color>
-    <color name="orange_gallery_divider">#FFD8CDB8</color>
-
-    <color name="orange_dialog_scrim">#44000000</color>
-
-    <color name="orange_icon_primary">#FFFFFFFF</color>
-    <color name="orange_icon_disabled">#FFB0B0BC</color>
-
     <!-- ========== 马卡龙主题色 ========== -->
     <color name="macaron_surface_darkest">#FFF7F0F5</color>
     <color name="macaron_surface_dark">#FFF5F0F3</color>
     <color name="macaron_surface_medium">#FFF0F5F5</color>
-    <color name="macaron_surface_light">#FFE8F1FF</color>
+    <color name="macaron_surface_light">#FFF6F3E7</color>
     <color name="macaron_surface_card">#FFFAF5F0</color>
 
     <color name="macaron_text_primary">#FF3D3A3A</color>
@@ -181,6 +73,186 @@
 
     <color name="macaron_icon_primary">#FF3D3A3A</color>
     <color name="macaron_icon_disabled">#FFBFBCBC</color>
+
+    <!-- ========== 蜜桃薄荷主题色（蜜桃粉/杏橙/薄荷绿/湖蓝 撞色） ========== -->
+    <color name="mint_surface_darkest">#FFFBF4EC</color>
+    <color name="mint_surface_dark">#FFFDF8F0</color>
+    <color name="mint_surface_medium">#FFF6F0E8</color>
+    <color name="mint_surface_light">#FF96C7B3</color>
+    <color name="mint_surface_card">#FFFFFAF2</color>
+
+    <color name="mint_text_primary">#FF3A3535</color>
+    <color name="mint_text_secondary">#FF6E6663</color>
+    <color name="mint_text_tertiary">#FF9C938F</color>
+    <color name="mint_text_disabled">#FFC2BAB6</color>
+
+    <color name="mint_accent">#FFF9B95C</color>
+    <color name="mint_accent_container">#22F9B95C</color>
+
+    <color name="mint_error">#FFD7897F</color>
+    <color name="mint_success">#FF96C7B3</color>
+
+    <color name="mint_shutter_outer">#FFE8DCD0</color>
+    <color name="mint_shutter_inner">#FFD7897F</color>
+
+    <color name="mint_overlay_light">#44FFFFFF</color>
+    <color name="mint_overlay_dark">#22000000</color>
+
+    <color name="mint_divider">#FFEADFD0</color>
+    <color name="mint_divider_dark">#FFDDD2C3</color>
+
+    <color name="mint_gallery_surface">#FFFBF4EC</color>
+    <color name="mint_gallery_surface_light">#FFFDF8F0</color>
+    <color name="mint_gallery_divider">#FFEADFD0</color>
+
+    <color name="mint_dialog_scrim">#44000000</color>
+
+    <color name="mint_icon_primary">#FF6398A9</color>
+    <color name="mint_icon_disabled">#FFC2BAB6</color>
+
+    <!-- ========== 夜樱主题色（深色系：玫瑰/紫夜樱） ========== -->
+    <color name="sakura_surface_darkest">#FF2B1F21</color>
+    <color name="sakura_surface_dark">#FF423048</color>
+    <color name="sakura_surface_medium">#FF553758</color>
+    <color name="sakura_surface_light">#FFA87A96</color>
+    <color name="sakura_surface_card">#FF3A2C30</color>
+
+    <color name="sakura_text_primary">#FFFCEFFA</color>
+    <color name="sakura_text_secondary">#FFE0CCDA</color>
+    <color name="sakura_text_tertiary">#FFA894A4</color>
+    <color name="sakura_text_disabled">#FF6E5A68</color>
+
+    <color name="sakura_accent">#FFD09DB8</color>
+    <color name="sakura_accent_container">#22D09DB8</color>
+
+    <color name="sakura_error">#FFE58A9E</color>
+    <color name="sakura_success">#FFA8C8A8</color>
+
+    <color name="sakura_shutter_outer">#FF4A3E48</color>
+    <color name="sakura_shutter_inner">#FFE0BCCE</color>
+
+    <color name="sakura_overlay_light">#33FFFFFF</color>
+    <color name="sakura_overlay_dark">#33000000</color>
+
+    <color name="sakura_divider">#FF4A3C46</color>
+    <color name="sakura_divider_dark">#FF5A4C56</color>
+
+    <color name="sakura_gallery_surface">#FF2B1F21</color>
+    <color name="sakura_gallery_surface_light">#FF423048</color>
+    <color name="sakura_gallery_divider">#FF4A3C46</color>
+
+    <color name="sakura_dialog_scrim">#66000000</color>
+
+    <color name="sakura_icon_primary">#FFFCEFFA</color>
+    <color name="sakura_icon_disabled">#FF6E5A68</color>
+
+    <!-- ========== 浅樱主题色（浅色系：玫瑰/粉白） ========== -->
+    <color name="blossom_surface_darkest">#FFFCEFFA</color>
+    <color name="blossom_surface_dark">#FFFDF4FA</color>
+    <color name="blossom_surface_medium">#FFF5E8F1</color>
+    <color name="blossom_surface_light">#FFE8D3E0</color>
+    <color name="blossom_surface_card">#FFFFF8FB</color>
+
+    <color name="blossom_text_primary">#FF2B1F21</color>
+    <color name="blossom_text_secondary">#FF423048</color>
+    <color name="blossom_text_tertiary">#FF6E5A68</color>
+    <color name="blossom_text_disabled">#FFA894A4</color>
+
+    <color name="blossom_accent">#FFD09DB8</color>
+    <color name="blossom_accent_container">#22D09DB8</color>
+
+    <color name="blossom_error">#FFD89BAE</color>
+    <color name="blossom_success">#FF7FA88A</color>
+
+    <color name="blossom_shutter_outer">#FFE0CCDA</color>
+    <color name="blossom_shutter_inner">#FFE58A9E</color>
+
+    <color name="blossom_overlay_light">#44FFFFFF</color>
+    <color name="blossom_overlay_dark">#22000000</color>
+
+    <color name="blossom_divider">#FFE8D3E0</color>
+    <color name="blossom_divider_dark">#FFD8C4D0</color>
+
+    <color name="blossom_gallery_surface">#FFFCEFFA</color>
+    <color name="blossom_gallery_surface_light">#FFFDF4FA</color>
+    <color name="blossom_gallery_divider">#FFE8D3E0</color>
+
+    <color name="blossom_dialog_scrim">#44000000</color>
+
+    <color name="blossom_icon_primary">#FF423048</color>
+    <color name="blossom_icon_disabled">#FFA894A4</color>
+
+    <!-- ========== 石墨主题色（灰阶冷感 + 法鲁红点缀） ========== -->
+    <color name="graphite_surface_darkest">#FFFAF9F8</color>
+    <color name="graphite_surface_dark">#FFF5F4F2</color>
+    <color name="graphite_surface_medium">#FFEDEBE8</color>
+    <color name="graphite_surface_light">#FFD8D5D1</color>
+    <color name="graphite_surface_card">#FFFFFFFF</color>
+
+    <color name="graphite_text_primary">#FF141616</color>
+    <color name="graphite_text_secondary">#FF3D3C38</color>
+    <color name="graphite_text_tertiary">#FF746D67</color>
+    <color name="graphite_text_disabled">#FFA49F9D</color>
+
+    <color name="graphite_accent">#FF3D3C38</color>
+    <color name="graphite_accent_container">#223D3C38</color>
+
+    <color name="graphite_error">#FFB03A35</color>
+    <color name="graphite_success">#FF5E7D5E</color>
+
+    <color name="graphite_shutter_outer">#FFD8D5D1</color>
+    <color name="graphite_shutter_inner">#FF7F1D1A</color>
+
+    <color name="graphite_overlay_light">#44FFFFFF</color>
+    <color name="graphite_overlay_dark">#22000000</color>
+
+    <color name="graphite_divider">#FFE2DFDC</color>
+    <color name="graphite_divider_dark">#FFD2CFCC</color>
+
+    <color name="graphite_gallery_surface">#FFFAF9F8</color>
+    <color name="graphite_gallery_surface_light">#FFF5F4F2</color>
+    <color name="graphite_gallery_divider">#FFE2DFDC</color>
+
+    <color name="graphite_dialog_scrim">#44000000</color>
+
+    <color name="graphite_icon_primary">#FF141616</color>
+    <color name="graphite_icon_disabled">#FFA49F9D</color>
+
+    <!-- ========== 醉莓主题色（深色系：红酒莓果） ========== -->
+    <color name="wine_surface_darkest">#FF230E0F</color>
+    <color name="wine_surface_dark">#FF541625</color>
+    <color name="wine_surface_medium">#FF6E2840</color>
+    <color name="wine_surface_light">#FF9D4060</color>
+    <color name="wine_surface_card">#FF3A1A20</color>
+
+    <color name="wine_text_primary">#FFF5E3E8</color>
+    <color name="wine_text_secondary">#FFD8C0C9</color>
+    <color name="wine_text_tertiary">#FFA88A96</color>
+    <color name="wine_text_disabled">#FF6E5560</color>
+
+    <color name="wine_accent">#FFBC788D</color>
+    <color name="wine_accent_container">#22BC788D</color>
+
+    <color name="wine_error">#FFD890A0</color>
+    <color name="wine_success">#FF8FA88F</color>
+
+    <color name="wine_shutter_outer">#FF4A1A28</color>
+    <color name="wine_shutter_inner">#FF910D38</color>
+
+    <color name="wine_overlay_light">#33FFFFFF</color>
+    <color name="wine_overlay_dark">#33000000</color>
+
+    <color name="wine_divider">#FF4A2230</color>
+    <color name="wine_divider_dark">#FF5A2E3C</color>
+
+    <color name="wine_gallery_surface">#FF230E0F</color>
+    <color name="wine_gallery_surface_light">#FF541625</color>
+    <color name="wine_gallery_divider">#FF4A2230</color>
+
+    <color name="wine_dialog_scrim">#66000000</color>
+
+    <color name="wine_icon_primary">#FFF5E3E8</color>
+    <color name="wine_icon_disabled">#FF6E5560</color>
 
     <!-- Surface 层级 -->
     <color name="surface_darkest">#FFF8F4EC</color>   <!-- 1. 主背景：奶白色 -->

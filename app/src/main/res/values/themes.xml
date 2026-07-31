@@ -27,6 +27,7 @@
         <item name="textTertiary">@color/text_tertiary</item>
         <item name="textDisabled">@color/text_disabled</item>
         <item name="accentColor">@color/accent</item>
+        <item name="onAccentColor">@color/text_primary</item>
         <item name="errorColor">@color/error</item>
         <item name="successColor">@color/success</item>
         <item name="shutterOuter">@color/shutter_outer</item>
@@ -56,6 +57,7 @@
         <item name="textTertiary">@color/macaron_text_tertiary</item>
         <item name="textDisabled">@color/macaron_text_disabled</item>
         <item name="accentColor">@color/macaron_accent</item>
+        <item name="onAccentColor">@color/macaron_text_primary</item>
         <item name="errorColor">@color/macaron_error</item>
         <item name="successColor">@color/macaron_success</item>
         <item name="shutterOuter">@color/macaron_shutter_outer</item>
@@ -85,126 +87,6 @@
         <item name="android:windowBackground">@color/macaron_surface_darkest</item>
     </style>
 
-    <style name="Theme.古法相机.纸红复古" parent="Theme.古法相机">
-        <item name="surfaceDarkest">@color/vintage_surface_darkest</item>
-        <item name="surfaceDark">@color/vintage_surface_dark</item>
-        <item name="surfaceMedium">@color/vintage_surface_medium</item>
-        <item name="surfaceLight">@color/vintage_surface_light</item>
-        <item name="surfaceCard">@color/vintage_surface_card</item>
-        <item name="textPrimary">@color/vintage_text_primary</item>
-        <item name="textSecondary">@color/vintage_text_secondary</item>
-        <item name="textTertiary">@color/vintage_text_tertiary</item>
-        <item name="textDisabled">@color/vintage_text_disabled</item>
-        <item name="accentColor">@color/vintage_accent</item>
-        <item name="errorColor">@color/vintage_error</item>
-        <item name="successColor">@color/vintage_success</item>
-        <item name="shutterOuter">@color/vintage_shutter_outer</item>
-        <item name="shutterInner">@color/vintage_shutter_inner</item>
-        <item name="overlayLight">@color/vintage_overlay_light</item>
-        <item name="overlayDark">@color/vintage_overlay_dark</item>
-        <item name="dividerColor">@color/vintage_divider</item>
-        <item name="dividerDark">@color/vintage_divider_dark</item>
-        <item name="gallerySurface">@color/vintage_gallery_surface</item>
-        <item name="gallerySurfaceLight">@color/vintage_gallery_surface_light</item>
-        <item name="galleryDivider">@color/vintage_gallery_divider</item>
-        <item name="dialogScrim">@color/vintage_dialog_scrim</item>
-        <item name="iconPrimary">@color/vintage_icon_primary</item>
-        <item name="iconDisabled">@color/vintage_icon_disabled</item>
-
-        <item name="colorPrimary">@color/vintage_accent</item>
-        <item name="colorOnPrimary">#FFFFFFFF</item>
-        <item name="colorPrimaryContainer">@color/vintage_accent_container</item>
-        <item name="colorOnPrimaryContainer">#FFFFFFFF</item>
-        <item name="colorSurface">@color/vintage_surface_dark</item>
-        <item name="colorOnSurface">@color/vintage_text_primary</item>
-        <item name="colorOnSurfaceVariant">@color/vintage_text_tertiary</item>
-        <item name="colorError">@color/vintage_error</item>
-        <item name="colorOnError">#FFFFFFFF</item>
-        <item name="android:statusBarColor">@color/vintage_surface_medium</item>
-        <item name="android:navigationBarColor">@color/vintage_surface_dark</item>
-        <item name="android:windowBackground">@color/vintage_surface_darkest</item>
-    </style>
-
-    <style name="Theme.古法相机.橙光奶油" parent="Theme.古法相机">
-        <item name="surfaceDarkest">@color/orange_surface_darkest</item>
-        <item name="surfaceDark">@color/orange_surface_dark</item>
-        <item name="surfaceMedium">@color/orange_surface_medium</item>
-        <item name="surfaceLight">@color/orange_surface_light</item>
-        <item name="surfaceCard">@color/orange_surface_card</item>
-        <item name="textPrimary">@color/orange_text_primary</item>
-        <item name="textSecondary">@color/orange_text_secondary</item>
-        <item name="textTertiary">@color/orange_text_tertiary</item>
-        <item name="textDisabled">@color/orange_text_disabled</item>
-        <item name="accentColor">@color/orange_accent</item>
-        <item name="errorColor">@color/orange_error</item>
-        <item name="successColor">@color/orange_success</item>
-        <item name="shutterOuter">@color/orange_shutter_outer</item>
-        <item name="shutterInner">@color/orange_shutter_inner</item>
-        <item name="overlayLight">@color/orange_overlay_light</item>
-        <item name="overlayDark">@color/orange_overlay_dark</item>
-        <item name="dividerColor">@color/orange_divider</item>
-        <item name="dividerDark">@color/orange_divider_dark</item>
-        <item name="gallerySurface">@color/orange_gallery_surface</item>
-        <item name="gallerySurfaceLight">@color/orange_gallery_surface_light</item>
-        <item name="galleryDivider">@color/orange_gallery_divider</item>
-        <item name="dialogScrim">@color/orange_dialog_scrim</item>
-        <item name="iconPrimary">@color/orange_icon_primary</item>
-        <item name="iconDisabled">@color/orange_icon_disabled</item>
-
-        <item name="colorPrimary">@color/orange_accent</item>
-        <item name="colorOnPrimary">#FFFFFFFF</item>
-        <item name="colorPrimaryContainer">@color/orange_accent_container</item>
-        <item name="colorOnPrimaryContainer">#FFFFFFFF</item>
-        <item name="colorSurface">@color/orange_surface_dark</item>
-        <item name="colorOnSurface">@color/orange_text_primary</item>
-        <item name="colorOnSurfaceVariant">@color/orange_text_tertiary</item>
-        <item name="colorError">@color/orange_error</item>
-        <item name="colorOnError">#FFFFFFFF</item>
-        <item name="android:statusBarColor">@color/orange_surface_medium</item>
-        <item name="android:navigationBarColor">@color/orange_surface_dark</item>
-        <item name="android:windowBackground">@color/orange_surface_darkest</item>
-    </style>
-
-    <style name="Theme.古法相机.森绿质朴" parent="Theme.古法相机">
-        <item name="surfaceDarkest">@color/forest_surface_darkest</item>
-        <item name="surfaceDark">@color/forest_surface_dark</item>
-        <item name="surfaceMedium">@color/forest_surface_medium</item>
-        <item name="surfaceLight">@color/forest_surface_light</item>
-        <item name="surfaceCard">@color/forest_surface_card</item>
-        <item name="textPrimary">@color/forest_text_primary</item>
-        <item name="textSecondary">@color/forest_text_secondary</item>
-        <item name="textTertiary">@color/forest_text_tertiary</item>
-        <item name="textDisabled">@color/forest_text_disabled</item>
-        <item name="accentColor">@color/forest_accent</item>
-        <item name="errorColor">@color/forest_error</item>
-        <item name="successColor">@color/forest_success</item>
-        <item name="shutterOuter">@color/forest_shutter_outer</item>
-        <item name="shutterInner">@color/forest_shutter_inner</item>
-        <item name="overlayLight">@color/forest_overlay_light</item>
-        <item name="overlayDark">@color/forest_overlay_dark</item>
-        <item name="dividerColor">@color/forest_divider</item>
-        <item name="dividerDark">@color/forest_divider_dark</item>
-        <item name="gallerySurface">@color/forest_gallery_surface</item>
-        <item name="gallerySurfaceLight">@color/forest_gallery_surface_light</item>
-        <item name="galleryDivider">@color/forest_gallery_divider</item>
-        <item name="dialogScrim">@color/forest_dialog_scrim</item>
-        <item name="iconPrimary">@color/forest_icon_primary</item>
-        <item name="iconDisabled">@color/forest_icon_disabled</item>
-
-        <item name="colorPrimary">@color/forest_accent</item>
-        <item name="colorOnPrimary">#FFFFFFFF</item>
-        <item name="colorPrimaryContainer">@color/forest_accent_container</item>
-        <item name="colorOnPrimaryContainer">#FFFFFFFF</item>
-        <item name="colorSurface">@color/forest_surface_dark</item>
-        <item name="colorOnSurface">@color/forest_text_primary</item>
-        <item name="colorOnSurfaceVariant">@color/forest_text_tertiary</item>
-        <item name="colorError">@color/forest_error</item>
-        <item name="colorOnError">#FFFFFFFF</item>
-        <item name="android:statusBarColor">@color/forest_surface_medium</item>
-        <item name="android:navigationBarColor">@color/forest_surface_dark</item>
-        <item name="android:windowBackground">@color/forest_surface_darkest</item>
-    </style>
-
     <style name="Theme.古法相机.脏脏莓咖" parent="Theme.Material3.Dark.NoActionBar">
         <item name="surfaceDarkest">@color/berry_surface_darkest</item>
         <item name="surfaceDark">@color/berry_surface_dark</item>
@@ -216,6 +98,7 @@
         <item name="textTertiary">@color/berry_text_tertiary</item>
         <item name="textDisabled">@color/berry_text_disabled</item>
         <item name="accentColor">@color/berry_accent</item>
+        <item name="onAccentColor">@color/berry_text_primary</item>
         <item name="errorColor">@color/berry_error</item>
         <item name="successColor">@color/berry_success</item>
         <item name="shutterOuter">@color/berry_shutter_outer</item>
@@ -243,6 +126,219 @@
         <item name="android:statusBarColor">@color/berry_surface_darkest</item>
         <item name="android:navigationBarColor">@color/berry_surface_darkest</item>
         <item name="android:windowBackground">@color/berry_surface_darkest</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <style name="Theme.古法相机.蜜桃薄荷" parent="Theme.古法相机">
+        <item name="surfaceDarkest">@color/mint_surface_darkest</item>
+        <item name="surfaceDark">@color/mint_surface_dark</item>
+        <item name="surfaceMedium">@color/mint_surface_medium</item>
+        <item name="surfaceLight">@color/mint_surface_light</item>
+        <item name="surfaceCard">@color/mint_surface_card</item>
+        <item name="textPrimary">@color/mint_text_primary</item>
+        <item name="textSecondary">@color/mint_text_secondary</item>
+        <item name="textTertiary">@color/mint_text_tertiary</item>
+        <item name="textDisabled">@color/mint_text_disabled</item>
+        <item name="accentColor">@color/mint_accent</item>
+        <item name="onAccentColor">@color/mint_text_primary</item>
+        <item name="errorColor">@color/mint_error</item>
+        <item name="successColor">@color/mint_success</item>
+        <item name="shutterOuter">@color/mint_shutter_outer</item>
+        <item name="shutterInner">@color/mint_shutter_inner</item>
+        <item name="overlayLight">@color/mint_overlay_light</item>
+        <item name="overlayDark">@color/mint_overlay_dark</item>
+        <item name="dividerColor">@color/mint_divider</item>
+        <item name="dividerDark">@color/mint_divider_dark</item>
+        <item name="gallerySurface">@color/mint_gallery_surface</item>
+        <item name="gallerySurfaceLight">@color/mint_gallery_surface_light</item>
+        <item name="galleryDivider">@color/mint_gallery_divider</item>
+        <item name="dialogScrim">@color/mint_dialog_scrim</item>
+        <item name="iconPrimary">@color/mint_icon_primary</item>
+        <item name="iconDisabled">@color/mint_icon_disabled</item>
+
+        <item name="colorPrimary">@color/mint_accent</item>
+        <item name="colorOnPrimary">#FF3A3535</item>
+        <item name="colorPrimaryContainer">@color/mint_accent_container</item>
+        <item name="colorOnPrimaryContainer">#FF3A3535</item>
+        <item name="colorSurface">@color/mint_surface_dark</item>
+        <item name="colorOnSurface">@color/mint_text_primary</item>
+        <item name="colorOnSurfaceVariant">@color/mint_text_tertiary</item>
+        <item name="colorError">@color/mint_error</item>
+        <item name="colorOnError">#FF3A3535</item>
+        <item name="android:statusBarColor">@color/mint_surface_medium</item>
+        <item name="android:navigationBarColor">@color/mint_surface_dark</item>
+        <item name="android:windowBackground">@color/mint_surface_darkest</item>
+    </style>
+
+    <style name="Theme.古法相机.夜樱" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="surfaceDarkest">@color/sakura_surface_darkest</item>
+        <item name="surfaceDark">@color/sakura_surface_dark</item>
+        <item name="surfaceMedium">@color/sakura_surface_medium</item>
+        <item name="surfaceLight">@color/sakura_surface_light</item>
+        <item name="surfaceCard">@color/sakura_surface_card</item>
+        <item name="textPrimary">@color/sakura_text_primary</item>
+        <item name="textSecondary">@color/sakura_text_secondary</item>
+        <item name="textTertiary">@color/sakura_text_tertiary</item>
+        <item name="textDisabled">@color/sakura_text_disabled</item>
+        <item name="accentColor">@color/sakura_accent</item>
+        <item name="onAccentColor">@color/sakura_icon_primary</item>
+        <item name="errorColor">@color/sakura_error</item>
+        <item name="successColor">@color/sakura_success</item>
+        <item name="shutterOuter">@color/sakura_shutter_outer</item>
+        <item name="shutterInner">@color/sakura_shutter_inner</item>
+        <item name="overlayLight">@color/sakura_overlay_light</item>
+        <item name="overlayDark">@color/sakura_overlay_dark</item>
+        <item name="dividerColor">@color/sakura_divider</item>
+        <item name="dividerDark">@color/sakura_divider_dark</item>
+        <item name="gallerySurface">@color/sakura_gallery_surface</item>
+        <item name="gallerySurfaceLight">@color/sakura_gallery_surface_light</item>
+        <item name="galleryDivider">@color/sakura_gallery_divider</item>
+        <item name="dialogScrim">@color/sakura_dialog_scrim</item>
+        <item name="iconPrimary">@color/sakura_icon_primary</item>
+        <item name="iconDisabled">@color/sakura_icon_disabled</item>
+
+        <item name="colorPrimary">@color/sakura_accent</item>
+        <item name="colorOnPrimary">#FF2B1F21</item>
+        <item name="colorPrimaryContainer">@color/sakura_accent_container</item>
+        <item name="colorOnPrimaryContainer">#FF2B1F21</item>
+        <item name="colorSurface">@color/sakura_surface_dark</item>
+        <item name="colorOnSurface">@color/sakura_text_primary</item>
+        <item name="colorOnSurfaceVariant">@color/sakura_text_tertiary</item>
+        <item name="colorError">@color/sakura_error</item>
+        <item name="colorOnError">#FF2B1F21</item>
+        <item name="android:statusBarColor">@color/sakura_surface_darkest</item>
+        <item name="android:navigationBarColor">@color/sakura_surface_darkest</item>
+        <item name="android:windowBackground">@color/sakura_surface_darkest</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <style name="Theme.古法相机.浅樱" parent="Theme.古法相机">
+        <item name="surfaceDarkest">@color/blossom_surface_darkest</item>
+        <item name="surfaceDark">@color/blossom_surface_dark</item>
+        <item name="surfaceMedium">@color/blossom_surface_medium</item>
+        <item name="surfaceLight">@color/blossom_surface_light</item>
+        <item name="surfaceCard">@color/blossom_surface_card</item>
+        <item name="textPrimary">@color/blossom_text_primary</item>
+        <item name="textSecondary">@color/blossom_text_secondary</item>
+        <item name="textTertiary">@color/blossom_text_tertiary</item>
+        <item name="textDisabled">@color/blossom_text_disabled</item>
+        <item name="accentColor">@color/blossom_accent</item>
+        <item name="onAccentColor">@color/blossom_text_primary</item>
+        <item name="errorColor">@color/blossom_error</item>
+        <item name="successColor">@color/blossom_success</item>
+        <item name="shutterOuter">@color/blossom_shutter_outer</item>
+        <item name="shutterInner">@color/blossom_shutter_inner</item>
+        <item name="overlayLight">@color/blossom_overlay_light</item>
+        <item name="overlayDark">@color/blossom_overlay_dark</item>
+        <item name="dividerColor">@color/blossom_divider</item>
+        <item name="dividerDark">@color/blossom_divider_dark</item>
+        <item name="gallerySurface">@color/blossom_gallery_surface</item>
+        <item name="gallerySurfaceLight">@color/blossom_gallery_surface_light</item>
+        <item name="galleryDivider">@color/blossom_gallery_divider</item>
+        <item name="dialogScrim">@color/blossom_dialog_scrim</item>
+        <item name="iconPrimary">@color/blossom_icon_primary</item>
+        <item name="iconDisabled">@color/blossom_icon_disabled</item>
+
+        <item name="colorPrimary">@color/blossom_accent</item>
+        <item name="colorOnPrimary">#FF2B1F21</item>
+        <item name="colorPrimaryContainer">@color/blossom_accent_container</item>
+        <item name="colorOnPrimaryContainer">#FF2B1F21</item>
+        <item name="colorSurface">@color/blossom_surface_dark</item>
+        <item name="colorOnSurface">@color/blossom_text_primary</item>
+        <item name="colorOnSurfaceVariant">@color/blossom_text_tertiary</item>
+        <item name="colorError">@color/blossom_error</item>
+        <item name="colorOnError">#FF2B1F21</item>
+        <item name="android:statusBarColor">@color/blossom_surface_medium</item>
+        <item name="android:navigationBarColor">@color/blossom_surface_dark</item>
+        <item name="android:windowBackground">@color/blossom_surface_darkest</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="Theme.古法相机.石墨" parent="Theme.古法相机">
+        <item name="surfaceDarkest">@color/graphite_surface_darkest</item>
+        <item name="surfaceDark">@color/graphite_surface_dark</item>
+        <item name="surfaceMedium">@color/graphite_surface_medium</item>
+        <item name="surfaceLight">@color/graphite_surface_light</item>
+        <item name="surfaceCard">@color/graphite_surface_card</item>
+        <item name="textPrimary">@color/graphite_text_primary</item>
+        <item name="textSecondary">@color/graphite_text_secondary</item>
+        <item name="textTertiary">@color/graphite_text_tertiary</item>
+        <item name="textDisabled">@color/graphite_text_disabled</item>
+        <item name="accentColor">@color/graphite_accent</item>
+        <item name="onAccentColor">#FFFFFFFF</item>
+        <item name="errorColor">@color/graphite_error</item>
+        <item name="successColor">@color/graphite_success</item>
+        <item name="shutterOuter">@color/graphite_shutter_outer</item>
+        <item name="shutterInner">@color/graphite_shutter_inner</item>
+        <item name="overlayLight">@color/graphite_overlay_light</item>
+        <item name="overlayDark">@color/graphite_overlay_dark</item>
+        <item name="dividerColor">@color/graphite_divider</item>
+        <item name="dividerDark">@color/graphite_divider_dark</item>
+        <item name="gallerySurface">@color/graphite_gallery_surface</item>
+        <item name="gallerySurfaceLight">@color/graphite_gallery_surface_light</item>
+        <item name="galleryDivider">@color/graphite_gallery_divider</item>
+        <item name="dialogScrim">@color/graphite_dialog_scrim</item>
+        <item name="iconPrimary">@color/graphite_icon_primary</item>
+        <item name="iconDisabled">@color/graphite_icon_disabled</item>
+
+        <item name="colorPrimary">@color/graphite_accent</item>
+        <item name="colorOnPrimary">#FFFFFFFF</item>
+        <item name="colorPrimaryContainer">@color/graphite_accent_container</item>
+        <item name="colorOnPrimaryContainer">#FFFFFFFF</item>
+        <item name="colorSurface">@color/graphite_surface_dark</item>
+        <item name="colorOnSurface">@color/graphite_text_primary</item>
+        <item name="colorOnSurfaceVariant">@color/graphite_text_tertiary</item>
+        <item name="colorError">@color/graphite_error</item>
+        <item name="colorOnError">#FFFFFFFF</item>
+        <item name="android:statusBarColor">@color/graphite_surface_medium</item>
+        <item name="android:navigationBarColor">@color/graphite_surface_dark</item>
+        <item name="android:windowBackground">@color/graphite_surface_darkest</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="Theme.古法相机.醉莓" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="surfaceDarkest">@color/wine_surface_darkest</item>
+        <item name="surfaceDark">@color/wine_surface_dark</item>
+        <item name="surfaceMedium">@color/wine_surface_medium</item>
+        <item name="surfaceLight">@color/wine_surface_light</item>
+        <item name="surfaceCard">@color/wine_surface_card</item>
+        <item name="textPrimary">@color/wine_text_primary</item>
+        <item name="textSecondary">@color/wine_text_secondary</item>
+        <item name="textTertiary">@color/wine_text_tertiary</item>
+        <item name="textDisabled">@color/wine_text_disabled</item>
+        <item name="accentColor">@color/wine_accent</item>
+        <item name="onAccentColor">@color/wine_surface_darkest</item>
+        <item name="errorColor">@color/wine_error</item>
+        <item name="successColor">@color/wine_success</item>
+        <item name="shutterOuter">@color/wine_shutter_outer</item>
+        <item name="shutterInner">@color/wine_shutter_inner</item>
+        <item name="overlayLight">@color/wine_overlay_light</item>
+        <item name="overlayDark">@color/wine_overlay_dark</item>
+        <item name="dividerColor">@color/wine_divider</item>
+        <item name="dividerDark">@color/wine_divider_dark</item>
+        <item name="gallerySurface">@color/wine_gallery_surface</item>
+        <item name="gallerySurfaceLight">@color/wine_gallery_surface_light</item>
+        <item name="galleryDivider">@color/wine_gallery_divider</item>
+        <item name="dialogScrim">@color/wine_dialog_scrim</item>
+        <item name="iconPrimary">@color/wine_icon_primary</item>
+        <item name="iconDisabled">@color/wine_icon_disabled</item>
+
+        <item name="colorPrimary">@color/wine_accent</item>
+        <item name="colorOnPrimary">#FF230E0F</item>
+        <item name="colorPrimaryContainer">@color/wine_accent_container</item>
+        <item name="colorOnPrimaryContainer">#FF230E0F</item>
+        <item name="colorSurface">@color/wine_surface_dark</item>
+        <item name="colorOnSurface">@color/wine_text_primary</item>
+        <item name="colorOnSurfaceVariant">@color/wine_text_tertiary</item>
+        <item name="colorError">@color/wine_error</item>
+        <item name="colorOnError">#FF230E0F</item>
+        <item name="android:statusBarColor">@color/wine_surface_darkest</item>
+        <item name="android:navigationBarColor">@color/wine_surface_darkest</item>
+        <item name="android:windowBackground">@color/wine_surface_darkest</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
     </style>

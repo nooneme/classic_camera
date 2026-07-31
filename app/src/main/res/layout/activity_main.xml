@@ -185,8 +185,7 @@
             android:layout_marginStart="@dimen/spacing_xxxl"
             android:src="@drawable/ic_filter"
             android:background="@drawable/btn_icon_md_bg"
-            android:scaleType="center"
-            android:contentDescription="滤镜" />
+            android:scaleType="center" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnShutter"

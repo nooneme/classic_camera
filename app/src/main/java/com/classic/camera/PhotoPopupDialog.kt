@@ -1,5 +1,8 @@
 package com.classic.camera
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.ColorDrawable
@@ -68,6 +71,7 @@ class PhotoPopupDialog : DialogFragment() {
         val tvExif1 = view.findViewById<TextView>(R.id.tvExifLine1)
         val tvExif2 = view.findViewById<TextView>(R.id.tvExifLine2)
         val btnDelete = view.findViewById<MaterialButton>(R.id.btnDelete)
+        val btnCopy = view.findViewById<MaterialButton>(R.id.btnCopy)
 
         if (photoUris.isEmpty()) {
             dismiss()
@@ -79,6 +83,7 @@ class PhotoPopupDialog : DialogFragment() {
         updateExif(tvExif1, tvExif2, currentIndex)
 
         btnDelete.setOnClickListener { deleteCurrentPhoto(viewPager, tvExif1, tvExif2) }
+        btnCopy.setOnClickListener { copyCurrentPhoto() }
 
         viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
@@ -204,6 +209,17 @@ class PhotoPopupDialog : DialogFragment() {
                     imageView.setImageBitmap(bmp)
                 }
             } catch (_: Exception) {}
+        }
+    }
+
+    private fun copyCurrentPhoto() {
+        val uri = photoUris.getOrNull(currentIndex) ?: return
+        try {
+            val cm = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newUri(requireContext().contentResolver, "photo", uri))
+            Toast.makeText(context, "已复制到剪切板", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(context, "复制失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 

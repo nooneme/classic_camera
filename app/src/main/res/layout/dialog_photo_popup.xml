@@ -43,14 +43,38 @@
         android:layout_weight="1"
         android:background="@android:color/black" />
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnDelete"
-        style="@style/Widget.Material3.Button.TextButton"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="@dimen/button_height"
-        android:text="删除照片"
-        android:textColor="?attr/errorColor"
-        android:textSize="@dimen/text_xl"
-        app:rippleColor="?attr/overlayDark" />
+        android:orientation="horizontal"
+        android:background="?attr/surfaceLight">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCopy"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="复制到剪切板"
+            android:textColor="?attr/iconPrimary"
+            android:textSize="@dimen/text_xl"
+            app:rippleColor="?attr/overlayDark" />
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:background="?attr/dividerColor" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnDelete"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="删除照片"
+            android:textColor="?attr/errorColor"
+            android:textSize="@dimen/text_xl"
+            app:rippleColor="?attr/overlayDark" />
+    </LinearLayout>
 
 </LinearLayout>
