@@ -76,6 +76,9 @@ class CameraController(
     // 实时曝光参数回调（每帧预览时触发，用于状态栏显示实际 ISO/快门）
     var onExposureInfo: ((iso: Int?, exposureNs: Long?) -> Unit)? = null
 
+    // 新预览会话配置完成回调（切换镜头后、新镜头首帧前触发，用于应用新参数/放行渲染）
+    var onPreviewReady: (() -> Unit)? = null
+
     // 拍照保存完成回调：通知外部最后一张照片的 content URI
     var onPhotoSaved: ((uri: Uri?) -> Unit)? = null
 
@@ -265,9 +268,13 @@ class CameraController(
         }, bgHandler)
 
         val rawSurface = rawReader!!.surface
+        val mySeq = openSeq
         val stateCb = object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(s: CameraCaptureSession) {
+                // 已被新一轮 open/close 取代则丢弃，避免旧会话误触发 onPreviewReady / 覆盖 session
+                if (mySeq != openSeq) { s.close(); return }
                 session = s
+                onPreviewReady?.invoke()
                 startRawRepeating(s)
             }
             override fun onConfigureFailed(s: CameraCaptureSession) {

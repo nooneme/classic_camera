@@ -76,6 +76,11 @@ class MainActivity : AppCompatActivity() {
     private var gpuAlignMerge: GpuAlignMerge? = null
     private var lastAppliedPreviewAspect: Float = 0f
 
+    /** 切换镜头期间丢弃残留帧：为 true 时 onRawFrame 直接返回，避免旧帧被新参数重绘。 */
+    @Volatile private var previewDropFrames = false
+    /** 待应用到 pipeline 的新镜头参数（等新会话配置完成后才真正应用）。 */
+    @Volatile private var pendingLensParams: LensInfo? = null
+
     // Camera2 相关
     private lateinit var cameraManager: CameraManager
     private var backgroundThread: HandlerThread? = null
@@ -1160,8 +1165,11 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // 切换镜头：刷新 pipeline 静态参数并重开 RAW 预览
-            applyLensParamsToPipeline(lens)
+            // 切换镜头：暂存新镜头参数并丢弃旧镜头残留帧。
+            // 参数不立即应用——等到新会话 onConfigured（新镜头首帧前）才真正写到 pipeline，
+            // 否则 GL 线程可能用新参数重绘旧帧，导致偏色/颠倒/CFA 错乱。
+            pendingLensParams = lens
+            previewDropFrames = true
             openSelectedLensPreview()
         }
     }
@@ -1188,6 +1196,9 @@ class MainActivity : AppCompatActivity() {
     /** 把镜头静态参数（黑电平/白电平/CCM/CFA/forwardMatrix/orientation）设置到 pipeline。 */
     private fun applyLensParamsToPipeline(lens: LensInfo) {
         val p = pipeline ?: return
+        // 新镜头会话就绪、即将接收新帧：作废旧的残留帧（防御），随后新帧会立即填充
+        p.rawBuffer = null
+        p.rawShorts = null
         // 黑电平：LensInfo 存的是 BlackLevelPattern.toString()，如 "[64, 64], [64, 64]"
         val bl = parseBlackLevel(lens.blackLevelPattern)
         p.blackLevelR = bl[0]; p.blackLevelG = bl[1]; p.blackLevelB = bl[2]
@@ -1239,6 +1250,15 @@ class MainActivity : AppCompatActivity() {
         val controller = cameraController ?: CameraController(this, cameraManager, backgroundHandler!!).also {
             cameraController = it
             it.manualController = manualController  // 注入手动曝光控制器
+            // 新镜头会话配置完成（新镜头首帧前）：应用暂存的静态参数并放行渲染
+            it.onPreviewReady = {
+                val pl = pendingLensParams
+                if (pl != null) {
+                    applyLensParamsToPipeline(pl)
+                    pendingLensParams = null
+                }
+                previewDropFrames = false
+            }
             it.onExposureComplete = { stopCaptureVibration() }
             it.onPhotoSaved = { uri ->
                 if (uri != null) {
@@ -1311,7 +1331,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
         // 每帧 RAW 数据回调：更新 pipeline 参数并请求 GL 重绘
-        controller.onRawFrame = { buf, w, h, wbR, wbG, wbB, blR, blG, blB, wl ->
+        controller.onRawFrame = rawFrame@ { buf, w, h, wbR, wbG, wbB, blR, blG, blB, wl ->
+            // 切换镜头期间丢弃残留帧：避免旧帧被新参数重绘（偏色/颠倒/CFA 错乱）
+            if (previewDropFrames) return@rawFrame
             val p = pipeline
             if (p != null) {
                 p.rawBuffer = buf
