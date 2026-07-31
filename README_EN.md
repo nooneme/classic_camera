@@ -38,6 +38,8 @@ The app ships with a **LUT learning engine**:
 
 No ads, no notifications, no accounts, no community bloat. Just the core ability to shoot: **clean, focused, and fully offline.**
 
+> **Compatibility note:** Currently only tested on the **Samsung Galaxy S23 Ultra**; behavior on other devices may differ.
+
 ## 🛠 Tech Stack
 
 | Layer | Technology |
