@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(export JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\")",
-      "Bash(./gradlew assembleDebug --console=plain)",
-      "Bash('/c/Program Files/Android/Android Studio/jbr/bin/javap' -classpath C:/Users/z/AppData/Local/Android/Sdk/platforms/android-36.1/android.jar android.hardware.camera2.DngCreator)"
-    ]
-  }
-}
