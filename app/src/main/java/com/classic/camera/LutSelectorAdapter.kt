@@ -38,6 +38,7 @@ class LutSelectorAdapter(
     private val noneEntry = LutEntry("无", null, null, null)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val bgExecutor = Executors.newSingleThreadExecutor()
+    private val pendingLoads = mutableSetOf<String>()
 
     var selectedPath: String = ""
         set(value) {
@@ -54,41 +55,59 @@ class LutSelectorAdapter(
     }
 
     fun loadFromDirectory(dir: File) {
-        // Phase 1: 立即显示文件列表（仅名称，无数据）
+        // 保留已加载的数据/缩略图，只对新出现且未加载的文件补加载，避免每次回到前台都清空重载
         LutThumbnail.resetSession()
         val currentPath = selectedPath
+        val existing = items
+            .filter { it.file != null }
+            .associateBy { it.file!!.absolutePath }
 
-        val nameOnly = mutableListOf<LutEntry>()
-        nameOnly.add(noneEntry)
+        val list = mutableListOf<LutEntry>()
+        list.add(noneEntry)
 
         if (dir.isDirectory) {
             dir.listFiles()
                 ?.filter { it.isFile && it.name.endsWith(".cube") }
                 ?.sortedByDescending { it.lastModified() }
                 ?.forEach { file ->
-                    nameOnly.add(LutEntry(file.nameWithoutExtension, file, null, null))
+                    val ex = existing[file.absolutePath]
+                    if (ex != null) {
+                        list.add(ex)
+                    } else {
+                        // 优先同步读取磁盘缓存的缩略图，避免进入页面后先空白再异步加载
+                        val cachedThumb = LutThumbnail.cachedThumbnail(context, file)
+                        list.add(LutEntry(file.nameWithoutExtension, file, null, cachedThumb))
+                    }
                 }
         }
 
-        val initialPath = if (nameOnly.any { it.file?.absolutePath == currentPath }) currentPath else ""
+        val initialPath = if (list.any { it.file?.absolutePath == currentPath }) currentPath else ""
         items.clear()
-        items.addAll(nameOnly)
+        items.addAll(list)
         selectedPath = initialPath
         notifyDataSetChanged()
         onPhase1Complete?.invoke()
 
+        // 只加载尚未有数据的条目（且不在加载队列中，避免重复排队）
+        val toLoad = list.filter {
+            it.file != null && it.lutData == null && it.file!!.absolutePath !in pendingLoads
+        }
+        if (toLoad.isEmpty()) return
+        toLoad.forEach { it.file?.let { f -> pendingLoads.add(f.absolutePath) } }
+
         // Phase 2: 后台逐个加载 LUT 数据 + 缩略图，每加载完一个就更新
         bgExecutor.execute {
-            for (i in 1 until nameOnly.size) {
-                val entry = nameOnly[i]
+            for (entry in toLoad) {
                 val file = entry.file ?: continue
                 val lutData = LutUtils.loadCubeFile(file)
                 val thumb = if (lutData != null) LutThumbnail.generate(lutData, 36, context, file) else null
                 val loaded = entry.copy(lutData = lutData, thumbnail = thumb)
 
                 mainHandler.post {
+                    pendingLoads.remove(file.absolutePath)
                     val idx = items.indexOfFirst { it.file?.absolutePath == file.absolutePath }
-                    if (idx >= 0) {
+                    // 仅在目标项仍未加载时更新，避免旧任务覆盖已加载的新数据
+                    if (idx >= 0 && items[idx].lutData == null) {
                         items[idx] = loaded
                         notifyItemChanged(idx)
                     }

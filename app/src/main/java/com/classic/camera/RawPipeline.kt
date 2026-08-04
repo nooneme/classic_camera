@@ -132,6 +132,7 @@ class RawPipeline : GLSurfaceView.Renderer {
 
     // ---- LUT 滤镜 ----
     @Volatile var lutFloatArray: FloatArray? = null
+    @Volatile var lutSize: Int = LutUtils.LUT_SIZE
     private var lutTextureId = 0
     private var lutEnabled = false
     @Volatile var lutIntensity: Float = 1f
@@ -519,7 +520,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         if (lutFloatArray != null) {
             GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
-            GLES30.glTexImage3D(GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGBA8, 33, 33, 33, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, lutToBuffer3D(lutFloatArray!!))
+            GLES30.glTexImage3D(GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGBA8, lutSize, lutSize, lutSize, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, lutToBuffer3D(lutFloatArray!!))
             while (GLES30.glGetError() != GLES30.GL_NO_ERROR) {}
             lutEnabled = true
         }
@@ -1099,7 +1100,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
         GLES30.glUniform1i(uniPost.uLutTex, 1)
-        GLES30.glUniform1f(uniPost.uLutSizeLoc, 33.0f)
+        GLES30.glUniform1f(uniPost.uLutSizeLoc, lutSize.toFloat())
         GLES30.glUniform1i(uniPost.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
         GLES30.glUniform1f(uniPost.uLutIntensity, lutIntensity)
 
@@ -1617,7 +1618,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
         GLES30.glUniform1i(uniPost.uLutTex, 1)
-        GLES30.glUniform1f(uniPost.uLutSizeLoc, 33.0f)
+        GLES30.glUniform1f(uniPost.uLutSizeLoc, lutSize.toFloat())
         GLES30.glUniform1i(uniPost.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
         GLES30.glUniform1f(uniPost.uLutIntensity, lutIntensity)
         drawQuadRaw(uniPost.aPos, uniPost.aTexCoord)
@@ -1725,7 +1726,7 @@ class RawPipeline : GLSurfaceView.Renderer {
                     GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
                     GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
                     GLES30.glUniform1i(uniPost.uLutTex, 1)
-                    GLES30.glUniform1f(uniPost.uLutSizeLoc, 33.0f)
+                    GLES30.glUniform1f(uniPost.uLutSizeLoc, lutSize.toFloat())
                     GLES30.glUniform1i(uniPost.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
                     GLES30.glUniform1f(uniPost.uLutIntensity, intensity)
                     drawQuadRaw(uniPost.aPos, uniPost.aTexCoord)
@@ -1813,7 +1814,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
         GLES30.glUniform1i(uniPost.uLutTex, 1)
-        GLES30.glUniform1f(uniPost.uLutSizeLoc, 33.0f)
+        GLES30.glUniform1f(uniPost.uLutSizeLoc, lutSize.toFloat())
         GLES30.glUniform1i(uniPost.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
         GLES30.glUniform1f(uniPost.uLutIntensity, intensity)
         drawQuadRawFlipped(uniPost.aPos, uniPost.aTexCoord)
@@ -1825,17 +1826,18 @@ class RawPipeline : GLSurfaceView.Renderer {
     fun setLut(data: FloatArray?) {
         lutFloatArray = data
         lutEnabled = data != null
+        lutSize = data?.let { LutUtils.lutSizeOf(it).takeIf { s -> s > 0 } } ?: LutUtils.LUT_SIZE
         if (data != null && lutTextureId != 0) {
             while (GLES30.glGetError() != GLES30.GL_NO_ERROR) {}
             GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
-            GLES30.glTexImage3D(GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGBA8, 33, 33, 33, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, lutToBuffer3D(data))
+            GLES30.glTexImage3D(GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGBA8, lutSize, lutSize, lutSize, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, lutToBuffer3D(data))
             while (GLES30.glGetError() != GLES30.GL_NO_ERROR) {}
         }
     }
 
     private fun lutToBuffer3D(lut: FloatArray): java.nio.ByteBuffer {
-        val size = 33
+        val size = LutUtils.lutSizeOf(lut).takeIf { it > 0 } ?: LutUtils.LUT_SIZE
         val buf = java.nio.ByteBuffer.allocateDirect(size * size * size * 4).order(java.nio.ByteOrder.nativeOrder())
         for (b in 0 until size) {
             for (g in 0 until size) {

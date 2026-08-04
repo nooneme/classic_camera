@@ -233,6 +233,7 @@ class MainActivity : AppCompatActivity() {
             val savedLut = LutUtils.loadCubeFile(java.io.File(currentFilterPath))
             if (savedLut != null) {
                 pipeline?.lutFloatArray = savedLut
+                pipeline?.lutSize = savedLut.let { LutUtils.lutSizeOf(it).takeIf { s -> s > 0 } } ?: LutUtils.LUT_SIZE
             } else {
                 currentFilterPath = ""
             }

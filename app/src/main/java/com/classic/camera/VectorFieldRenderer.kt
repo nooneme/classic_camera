@@ -170,15 +170,17 @@ class VectorFieldRenderer : GLSurfaceView.Renderer {
     }
 
     private fun buildVectorBuffers(lut: FloatArray) {
+        val lutSize = LutUtils.lutSizeOf(lut).takeIf { it > 0 } ?: LUT_SIZE
+        val size = lutSize
         maxOffset = 0f
 
-        for (bz in 0 until LUT_SIZE step STRIDE) {
-            for (gy in 0 until LUT_SIZE step STRIDE) {
-                for (rx in 0 until LUT_SIZE step STRIDE) {
-                    val idx = (bz * LUT_SIZE * LUT_SIZE + gy * LUT_SIZE + rx) * 3
-                    val inR = rx / (LUT_SIZE - 1).toFloat()
-                    val inG = gy / (LUT_SIZE - 1).toFloat()
-                    val inB = bz / (LUT_SIZE - 1).toFloat()
+        for (bz in 0 until size step STRIDE) {
+            for (gy in 0 until size step STRIDE) {
+                for (rx in 0 until size step STRIDE) {
+                    val idx = (bz * size * size + gy * size + rx) * 3
+                    val inR = rx / (size - 1).toFloat()
+                    val inG = gy / (size - 1).toFloat()
+                    val inB = bz / (size - 1).toFloat()
                     val outR = lut[idx]; val outG = lut[idx + 1]; val outB = lut[idx + 2]
                     val dr = (outR - inR) * 255f
                     val dg = (outG - inG) * 255f
@@ -194,17 +196,17 @@ class VectorFieldRenderer : GLSurfaceView.Renderer {
         val dotVerts = mutableListOf<Float>()
         val lineVerts = mutableListOf<Float>()
 
-        for (bz in 0 until LUT_SIZE step STRIDE) {
-            for (gy in 0 until LUT_SIZE step STRIDE) {
-                for (rx in 0 until LUT_SIZE step STRIDE) {
-                    val inR = rx / (LUT_SIZE - 1).toFloat()
-                    val inG = gy / (LUT_SIZE - 1).toFloat()
-                    val inB = bz / (LUT_SIZE - 1).toFloat()
-                    val posX = rx * 255f / (LUT_SIZE - 1)
-                    val posY = gy * 255f / (LUT_SIZE - 1)
-                    val posZ = bz * 255f / (LUT_SIZE - 1)
+        for (bz in 0 until size step STRIDE) {
+            for (gy in 0 until size step STRIDE) {
+                for (rx in 0 until size step STRIDE) {
+                    val inR = rx / (size - 1).toFloat()
+                    val inG = gy / (size - 1).toFloat()
+                    val inB = bz / (size - 1).toFloat()
+                    val posX = rx * 255f / (size - 1)
+                    val posY = gy * 255f / (size - 1)
+                    val posZ = bz * 255f / (size - 1)
 
-                    val idx = (bz * LUT_SIZE * LUT_SIZE + gy * LUT_SIZE + rx) * 3
+                    val idx = (bz * size * size + gy * size + rx) * 3
                     val outR = lut[idx]; val outG = lut[idx + 1]; val outB = lut[idx + 2]
 
                     val dr = (outR - inR) * 255f * vecScale

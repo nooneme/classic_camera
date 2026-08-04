@@ -45,19 +45,19 @@ object LutThumbnail {
                 if (cached != null) return cached
             }
         }
-
         val base = getBaseBitmap(context, size)
         val pixels = IntArray(size * size)
         base.getPixels(pixels, 0, size, 0, 0, size, size)
 
+        val lutSize = LutUtils.lutSizeOf(lut).takeIf { it > 0 } ?: 33
         for (i in pixels.indices) {
             val argb = pixels[i]
             val r = Color.red(argb)
             val g = Color.green(argb)
             val b = Color.blue(argb)
-            val outR = lookupLutChannel(lut, 33, r / 255f, g / 255f, b / 255f, 0)
-            val outG = lookupLutChannel(lut, 33, r / 255f, g / 255f, b / 255f, 1)
-            val outB = lookupLutChannel(lut, 33, r / 255f, g / 255f, b / 255f, 2)
+            val outR = lookupLutChannel(lut, lutSize, r / 255f, g / 255f, b / 255f, 0)
+            val outG = lookupLutChannel(lut, lutSize, r / 255f, g / 255f, b / 255f, 1)
+            val outB = lookupLutChannel(lut, lutSize, r / 255f, g / 255f, b / 255f, 2)
             pixels[i] = Color.rgb(
                 (outR * 255).toInt().coerceIn(0, 255),
                 (outG * 255).toInt().coerceIn(0, 255),
@@ -112,5 +112,13 @@ object LutThumbnail {
 
     fun resetSession() {
         // no longer needed — using fixed base image
+    }
+
+    /** 同步读取磁盘上已缓存的缩略图（主线程安全，图片极小）。未缓存时返回 null。 */
+    fun cachedThumbnail(context: Context, lutFile: File): Bitmap? {
+        return try {
+            val cache = File(getCacheDir(context), "${cacheKey(lutFile)}.png")
+            if (cache.exists()) BitmapFactory.decodeFile(cache.absolutePath) else null
+        } catch (e: Exception) { null }
     }
 }
