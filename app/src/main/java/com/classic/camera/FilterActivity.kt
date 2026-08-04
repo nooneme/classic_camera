@@ -40,6 +40,7 @@ class FilterActivity : AppCompatActivity() {
 
         listView = findViewById(R.id.listFilters)
         tvEmptyHint = findViewById(R.id.tvEmptyHint)
+        findViewById<TextView>(R.id.tvFilterPath).text = LutUtils.filtersDir().absolutePath
 
         adapter = FilterAdapter()
         listView.adapter = adapter
@@ -59,12 +60,16 @@ class FilterActivity : AppCompatActivity() {
             startActivity(Intent(this, ApplyFilterActivity::class.java))
         }
 
-        setupFileObserver()
-        LutUtils.seedPresetFilters(this)
+        if (LutUtils.isStorageAuthorized(this)) {
+            setupFileObserver()
+            LutUtils.seedPresetFilters(this)
+        } else if (LutUtils.shouldRequestStorage(this)) {
+            LutUtils.requestStorageAccess(this)
+        }
     }
 
     private fun setupFileObserver() {
-        val dir = getExternalFilesDir("filters") ?: filesDir
+        val dir = LutUtils.filtersDir()
         dir.mkdirs()
 
         fileObserver = object : FileObserver(dir.absolutePath, CREATE or DELETE or MOVED_FROM or MOVED_TO) {
@@ -79,6 +84,10 @@ class FilterActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (LutUtils.isStorageAuthorized(this)) {
+            if (fileObserver == null) setupFileObserver()
+            LutUtils.seedPresetFilters(this)
+        }
         loadFilters()
     }
 
@@ -96,7 +105,7 @@ class FilterActivity : AppCompatActivity() {
     private fun loadFilters() {
         filterList.clear()
         filterList.add(noneItem)
-        val dir = getExternalFilesDir("filters") ?: filesDir
+        val dir = LutUtils.filtersDir()
         if (dir.isDirectory) {
             dir.listFiles()
                 ?.filter { it.isFile && it.name.endsWith(".cube") }

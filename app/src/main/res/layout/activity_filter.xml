@@ -8,10 +8,11 @@
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="@dimen/toolbar_height"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
         android:paddingHorizontal="@dimen/spacing_xl"
+        android:paddingTop="@dimen/spacing_md"
+        android:paddingBottom="@dimen/spacing_sm"
         android:background="?attr/surfaceMedium">
 
         <TextView
@@ -21,6 +22,16 @@
             android:textColor="?attr/textPrimary"
             android:textSize="@dimen/text_xxl"
             android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvFilterPath"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="middle"
+            android:textColor="?attr/textTertiary"
+            android:textSize="@dimen/text_body_lg"
+            android:paddingTop="@dimen/spacing_xs" />
     </LinearLayout>
 
     <TextView

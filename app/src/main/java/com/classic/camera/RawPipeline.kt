@@ -787,6 +787,16 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES31.glDrawArrays(GLES31.GL_TRIANGLE_STRIP, 0, 4)
     }
 
+    /** 绘制 quad，但垂直翻转 V 坐标（窗口 surface 渲染时 Y 方向与 FBO 相反）。 */
+    private fun drawQuadRawFlipped(aPos: Int, aTex: Int) {
+        val flippedUVs = floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
+        GLES31.glEnableVertexAttribArray(aPos)
+        GLES31.glVertexAttribPointer(aPos, 2, GLES31.GL_FLOAT, false, 0, floatBuf(quadVerts))
+        GLES31.glEnableVertexAttribArray(aTex)
+        GLES31.glVertexAttribPointer(aTex, 2, GLES31.GL_FLOAT, false, 0, floatBuf(flippedUVs))
+        GLES31.glDrawArrays(GLES31.GL_TRIANGLE_STRIP, 0, 4)
+    }
+
     private fun drawQuadBlit() {
         GLES30.glEnableVertexAttribArray(0)
         GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 0, floatBuf(quadVerts))
@@ -1664,6 +1674,153 @@ class RawPipeline : GLSurfaceView.Renderer {
         }
     }
 
+    /**
+     * 对一张已解码的 RGB 图做 GPU LUT 滤镜（GL 线程中调用）。
+     * 只复用 LUT pass（progPostProcess + lutTextureId），逐像素点运算，可安全分块，结果与整图一致。
+     * [maxTexOverride] >0 时强制 tile 尺寸（便于测试）。
+     */
+    fun applyLutToBitmap(input: Bitmap, lut: FloatArray?, intensity: Float, maxTexOverride: Int = 0): Bitmap? {
+        val w = input.width; val h = input.height
+        if (w <= 0 || h <= 0) return null
+
+        setLut(lut)
+        lutIntensity = intensity
+
+        val maxInt = IntArray(1)
+        GLES30.glGetIntegerv(GLES30.GL_MAX_TEXTURE_SIZE, maxInt, 0)
+        val tile = if (maxTexOverride > 0) maxTexOverride else (if (maxInt[0] > 0) maxInt[0] else 4096)
+
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val inputTex = IntArray(1)
+        GLES30.glGenTextures(1, inputTex, 0)
+        val srcTex = inputTex[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, srcTex)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+
+        try {
+            for (ty in 0 until h step tile) {
+                val th = minOf(tile, h - ty)
+                for (tx in 0 until w step tile) {
+                    val tw = minOf(tile, w - tx)
+                    val tileBmp = Bitmap.createBitmap(input, tx, ty, tw, th)
+                    GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, srcTex)
+                    GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, tileBmp, 0)
+
+                    ensureCaptureFbo(tw, th)
+                    GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, captureFbo)
+                    GLES30.glViewport(0, 0, tw, th)
+                    GLES30.glClearColor(0f, 0f, 0f, 1f)
+                    GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+
+                    GLES30.glUseProgram(progPostProcess)
+                    GLES30.glUniform2f(uniPost.uAspectScale, 1f, 1f)
+                    GLES30.glUniform1i(uniPost.uOrientation, 0)
+                    GLES30.glUniform1i(uniPost.uMirror, 0)
+                    GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+                    GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, srcTex)
+                    GLES30.glUniform1i(uniPost.uInputTex, 0)
+                    GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+                    GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
+                    GLES30.glUniform1i(uniPost.uLutTex, 1)
+                    GLES30.glUniform1f(uniPost.uLutSizeLoc, 33.0f)
+                    GLES30.glUniform1i(uniPost.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
+                    GLES30.glUniform1f(uniPost.uLutIntensity, intensity)
+                    drawQuadRaw(uniPost.aPos, uniPost.aTexCoord)
+
+                    val pix = IntArray(tw * th)
+                    val buf = ByteBuffer.allocateDirect(tw * th * 4).order(ByteOrder.nativeOrder())
+                    GLES30.glReadPixels(0, 0, tw, th, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buf)
+                    buf.position(0)
+                    for (sy in 0 until th) {
+                        val base = sy * tw
+                        for (sx in 0 until tw) {
+                            val r = buf.get().toInt() and 0xFF
+                            val g = buf.get().toInt() and 0xFF
+                            val b = buf.get().toInt() and 0xFF
+                            val a = buf.get().toInt() and 0xFF
+                            pix[base + sx] = (a shl 24) or (r shl 16) or (g shl 8) or b
+                        }
+                    }
+                    out.setPixels(pix, 0, tw, tx, ty, tw, th)
+
+                    if (tileBmp !== input) tileBmp.recycle()
+                }
+            }
+        } finally {
+            GLES30.glDeleteTextures(1, inputTex, 0)
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+            if (lastViewportW > 0 && lastViewportH > 0) {
+                GLES30.glViewport(0, 0, lastViewportW, lastViewportH)
+            }
+        }
+        return out
+    }
+
+    /**
+     * 把 LUT 滤镜结果直接渲染到当前 MakeCurrent 的窗口 surface（FBO 0）。
+     * 用于 TextureView 实时预览，无 glReadPixels 读回，切换滤镜流畅。
+     * 内部做 aspect-fit 适配到 [viewW]x[viewH]。GL 线程中调用。
+     */
+    fun renderLutToView(input: Bitmap, lut: FloatArray?, intensity: Float, viewW: Int, viewH: Int) {
+        if (viewW <= 0 || viewH <= 0 || input.width <= 0 || input.height <= 0) return
+        setLut(lut)
+        lutIntensity = intensity
+
+        // 若原图超过纹理上限，预览用缩放图上传（仅影响预览显示，不影响保存的全图）
+        var src = input
+        val maxInt = IntArray(1)
+        GLES30.glGetIntegerv(GLES30.GL_MAX_TEXTURE_SIZE, maxInt, 0)
+        val maxTex = if (maxInt[0] > 0) maxInt[0] else 4096
+        val needsDownscale = src.width > maxTex || src.height > maxTex
+        if (needsDownscale) {
+            val s = minOf(maxTex.toFloat() / src.width, maxTex.toFloat() / src.height)
+            val nw = (src.width * s).toInt().coerceAtLeast(1)
+            val nh = (src.height * s).toInt().coerceAtLeast(1)
+            src = Bitmap.createScaledBitmap(src, nw, nh, true)
+        }
+
+        val inputTex = IntArray(1)
+        GLES30.glGenTextures(1, inputTex, 0)
+        val srcTex = inputTex[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, srcTex)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, src, 0)
+        if (src !== input) src.recycle()
+
+        // 绘制到窗口 surface（FBO 0），做 aspect-fit
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        GLES30.glViewport(0, 0, viewW, viewH)
+        GLES30.glClearColor(0f, 0f, 0f, 1f)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+
+        GLES30.glUseProgram(progPostProcess)
+        val imgAspect = input.width.toFloat() / input.height.toFloat()
+        val viewAspect = viewW.toFloat() / viewH.toFloat()
+        val (ax, ay) = if (imgAspect > viewAspect) Pair(1f, viewAspect / imgAspect)
+            else Pair(imgAspect / viewAspect, 1f)
+        GLES30.glUniform2f(uniPost.uAspectScale, ax, ay)
+        GLES30.glUniform1i(uniPost.uOrientation, 0)
+        GLES30.glUniform1i(uniPost.uMirror, 0)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, srcTex)
+        GLES30.glUniform1i(uniPost.uInputTex, 0)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, lutTextureId)
+        GLES30.glUniform1i(uniPost.uLutTex, 1)
+        GLES30.glUniform1f(uniPost.uLutSizeLoc, 33.0f)
+        GLES30.glUniform1i(uniPost.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
+        GLES30.glUniform1f(uniPost.uLutIntensity, intensity)
+        drawQuadRawFlipped(uniPost.aPos, uniPost.aTexCoord)
+
+        GLES30.glDeleteTextures(1, inputTex, 0)
+    }
+
     /** 设置 LUT 数据（GL 线程中调用）。null = 关闭滤镜。 */
     fun setLut(data: FloatArray?) {
         lutFloatArray = data
@@ -1675,23 +1832,6 @@ class RawPipeline : GLSurfaceView.Renderer {
             GLES30.glTexImage3D(GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGBA8, 33, 33, 33, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, lutToBuffer3D(data))
             while (GLES30.glGetError() != GLES30.GL_NO_ERROR) {}
         }
-    }
-
-    private fun lutToBuffer(lut: FloatArray): java.nio.ByteBuffer {
-        val w = 1089; val h = 33
-        val buf = java.nio.ByteBuffer.allocateDirect(w * h * 4).order(java.nio.ByteOrder.nativeOrder())
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                val bSlice = x / 33; val rIndex = x % 33; val gIndex = y
-                val idx = (bSlice * 1089 + gIndex * 33 + rIndex) * 3
-                buf.put((lut[idx] * 255f).toInt().coerceIn(0, 255).toByte())
-                buf.put((lut[idx + 1] * 255f).toInt().coerceIn(0, 255).toByte())
-                buf.put((lut[idx + 2] * 255f).toInt().coerceIn(0, 255).toByte())
-                buf.put(255.toByte())
-            }
-        }
-        buf.rewind()
-        return buf
     }
 
     private fun lutToBuffer3D(lut: FloatArray): java.nio.ByteBuffer {

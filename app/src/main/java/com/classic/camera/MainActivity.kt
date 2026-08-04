@@ -138,7 +138,7 @@ class MainActivity : AppCompatActivity() {
         val path = result.data?.getStringExtra("filter_path") ?: ""
         currentFilterPath = path
         lutAdapter.selectedPath = path
-        tvStatusFilter.text = if (path.isNotEmpty()) "滤镜: ${java.io.File(path).nameWithoutExtension}" else "滤镜: 无"
+        tvStatusFilter.text = if (path.isNotEmpty()) java.io.File(path).nameWithoutExtension else ""
         // 先在主线程加载 .cube 文件（避免 GL 线程做 I/O）
         val lut = if (path.isNotEmpty()) LutUtils.loadCubeFile(java.io.File(path)) else null
         glSurfaceView.queueEvent {
@@ -238,7 +238,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         tvStatusFilter?.text = if (currentFilterPath.isNotEmpty())
-            "滤镜: ${java.io.File(currentFilterPath).nameWithoutExtension}" else "滤镜: 无"
+            java.io.File(currentFilterPath).nameWithoutExtension else ""
 
         // ---- LUT 选择器初始化 ----
         lutRecyclerView = findViewById(R.id.lutRecyclerView)
@@ -248,7 +248,7 @@ class MainActivity : AppCompatActivity() {
                 val path = entry.file?.absolutePath ?: ""
                 currentFilterPath = path
                 tvStatusFilter.text = if (path.isNotEmpty())
-                    "滤镜: ${java.io.File(path).nameWithoutExtension}" else "滤镜: 无"
+                    java.io.File(path).nameWithoutExtension else ""
                 val lut = entry.lutData
                 glSurfaceView.queueEvent {
                     pipeline?.setLut(lut)
@@ -991,8 +991,11 @@ class MainActivity : AppCompatActivity() {
     // ================= LUT 列表加载 =================
 
     private fun loadLutList() {
-        val dir = getExternalFilesDir("filters") ?: filesDir
-        lutAdapter.loadFromDirectory(dir)
+        if (!LutUtils.isStorageAuthorized(this)) {
+            if (LutUtils.shouldRequestStorage(this)) LutUtils.requestStorageAccess(this)
+            return
+        }
+        lutAdapter.loadFromDirectory(LutUtils.filtersDir())
     }
 
     // ================= 最后照片按钮 =================

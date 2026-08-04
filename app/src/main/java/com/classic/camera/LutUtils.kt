@@ -1,14 +1,63 @@
 package com.classic.camera
 
+import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import java.io.BufferedReader
 import java.io.File
 
 object LutUtils {
     const val LUT_SIZE = 33
+
+    /** 滤镜公共目录：Documents/ClassicCamera/filters（手机文件管理器可直接访问） */
+    fun filtersDir(): File =
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "ClassicCamera/filters")
+
+    /** 是否已获得读写公共目录所需的存储权限。 */
+    fun isStorageAuthorized(context: Context): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+            Environment.isExternalStorageManager()
+        else
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+                PackageManager.PERMISSION_GRANTED
+
+    /** 请求存储权限：API 30+ 跳转系统「所有文件访问」设置页；API 26-29 走运行时 WRITE 权限。 */
+    fun requestStorageAccess(activity: Activity) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                activity.startActivity(
+                    Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                        .setData(Uri.parse("package:" + activity.packageName))
+                )
+            } catch (e: Exception) {
+                activity.startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+            }
+        } else {
+            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 103)
+        }
+    }
+
+    private const val PREFS = "filter_storage"
+    private const val KEY_ASKED = "asked"
+
+    /** 首次进入且未授权时提示请求；已提示过则不再反复弹系统设置，避免骚扰。 */
+    fun shouldRequestStorage(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(KEY_ASKED, false)) return false
+        prefs.edit().putBoolean(KEY_ASKED, true).apply()
+        return true
+    }
 
     fun loadCubeFile(file: File): FloatArray? {
         val total = LUT_SIZE * LUT_SIZE * LUT_SIZE
@@ -78,14 +127,15 @@ object LutUtils {
     }
 
     private const val PREFS_NAME = "preset_filters"
-    private const val KEY_SEEDED = "seeded"
+    private const val KEY_SEEDED = "seeded_v2"
 
     fun seedPresetFilters(context: Context) {
         val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (prefs.getBoolean(KEY_SEEDED, false)) return
 
-        val destDir = context.getExternalFilesDir("filters") ?: context.filesDir
-        destDir.mkdirs()
+        if (!isStorageAuthorized(context)) return
+        val destDir = filtersDir()
+        if (!destDir.exists() && !destDir.mkdirs()) return
 
         try {
             val list = context.assets.list("filters") ?: return

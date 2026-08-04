@@ -3,56 +3,120 @@ package com.classic.camera
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.BitmapRegionDecoder
-import android.graphics.Rect
 import android.net.Uri
+import android.opengl.GLES30
+import android.opengl.GLSurfaceView
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.View
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
-import com.google.android.material.button.MaterialButton
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
-import android.widget.ScrollView
-import android.widget.Spinner
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import java.io.File
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.button.MaterialButton
+import javax.microedition.khronos.egl.EGL10
+import javax.microedition.khronos.egl.EGLConfig
+import javax.microedition.khronos.egl.EGLContext
+import javax.microedition.khronos.egl.EGLDisplay
+import javax.microedition.khronos.opengles.GL10
 
 class ApplyFilterActivity : AppCompatActivity() {
 
     private lateinit var imageArea: FrameLayout
     private lateinit var imagePlaceholder: LinearLayout
-    private lateinit var imagePreview: ImageView
-    private lateinit var filterSpinner: Spinner
-    private lateinit var btnApply: MaterialButton
-    private lateinit var resultImage: ImageView
+    private lateinit var previewView: GLSurfaceView
+    private lateinit var lutAdapter: LutSelectorAdapter
+    private lateinit var lutRecyclerView: RecyclerView
+    private lateinit var seekIntensity: SeekBar
     private lateinit var btnSave: MaterialButton
     private lateinit var progressBar: ProgressBar
-    private lateinit var tvResultLabel: TextView
-    private lateinit var scrollView: ScrollView
+    private lateinit var tvFilterName: TextView
 
     private var selectedImageUri: Uri? = null
-    private var selectedFilter: File? = null
+    private var originalBitmap: Bitmap? = null
     private var resultBitmap: Bitmap? = null
 
-    private var filterFiles = listOf<File>()
-    private var filterNames = listOf<String>()
+    private var pipeline: RawPipeline? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private var currentFilterPath: String = ""
+    private var currentLut: FloatArray? = null
+    private var previewW = 0
+    private var previewH = 0
+
+    /** GL 上下文就绪标记（由 renderer 的 onSurfaceCreated 回调置位）。 */
+    @Volatile private var glReady = false
+
+    /** 按住显示原图（0.5 秒后置 true；松开恢复滤镜）。 */
+    @Volatile private var showOriginal = false
+    private var pressed = false
+    private val pressHandler = Handler(Looper.getMainLooper())
+    private val showOriginalRunnable = Runnable { showOriginal = true; renderPreview() }
+    private val clickRunnable = Runnable { imagePicker.launch(Intent(this, GalleryActivity::class.java)) }
+
+    /** 自定义 Renderer：把 LUT 滤镜结果画到 GLSurfaceView（GPU 直出，无读回）。 */
+    private inner class LutRenderer : GLSurfaceView.Renderer {
+        override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+            pipeline = RawPipeline()
+            pipeline!!.onSurfaceCreated(gl, config)
+            glReady = true
+        }
+        override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
+            GLES30.glViewport(0, 0, width, height)
+        }
+        override fun onDrawFrame(gl: GL10?) {
+            val bmp = originalBitmap ?: return
+            // 按住显示原图：跳过 LUT，直接渲染无滤镜原图
+            val showOriginalNow = showOriginal
+            val lut = if (!showOriginalNow && currentFilterPath.isNotEmpty() && currentLut != null &&
+                seekIntensity.progress > 0) currentLut else null
+            val intensity = if (lut != null) seekIntensity.progress / 100f else 0f
+            // 用当前 GLSurfaceView 尺寸做 aspect-fit 渲染
+            pipeline?.renderLutToView(bmp, lut, intensity, previewW, previewH)
+        }
+    }
 
     private val imagePicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
             val uri = result.data?.data
             if (uri != null) {
                 selectedImageUri = uri
-                imagePreview.setImageURI(uri)
-                imagePreview.visibility = ImageView.VISIBLE
                 imagePlaceholder.visibility = LinearLayout.GONE
-                updateApplyButton()
+                previewView.visibility = View.VISIBLE
+                // 后台解码全尺寸原图（GPU 渲染用）
+                Thread {
+                    val bmp = decodeFullBitmap(uri)
+                    mainHandler.post {
+                        originalBitmap = bmp
+                        if (bmp == null) {
+                            Toast.makeText(this, "图片加载失败", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Log.d(TAG, "原图解码完成: ${bmp.width}x${bmp.height}")
+                            updateSaveEnabled()
+                            // 设置预览尺寸：宽度填满 imageArea（含内边距），高度按图片比例
+                            imageArea.post {
+                                val availW = imageArea.width - imageArea.paddingLeft - imageArea.paddingRight
+                                val w = availW.coerceAtLeast(1)
+                                val h = (w.toFloat() * bmp.height / bmp.width).toInt()
+                                previewW = w
+                                previewH = h
+                                val lp = previewView.layoutParams
+                                lp.width = w
+                                lp.height = h
+                                previewView.layoutParams = lp
+                                renderPreview()
+                            }
+                        }
+                    }
+                }.start()
             }
         }
     }
@@ -64,187 +128,173 @@ class ApplyFilterActivity : AppCompatActivity() {
 
         imageArea = findViewById(R.id.imageArea)
         imagePlaceholder = findViewById(R.id.imagePlaceholder)
-        imagePreview = findViewById(R.id.imagePreview)
-        filterSpinner = findViewById(R.id.filterSpinner)
-        btnApply = findViewById(R.id.btnApply)
-        resultImage = findViewById(R.id.resultImage)
+        previewView = findViewById(R.id.previewView)
+        seekIntensity = findViewById(R.id.seekIntensity)
         btnSave = findViewById(R.id.btnSave)
         progressBar = findViewById(R.id.progressBar)
-        tvResultLabel = findViewById(R.id.tvResultLabel)
-        scrollView = findViewById(R.id.scrollView)
+        tvFilterName = findViewById(R.id.tvFilterName)
+        lutRecyclerView = findViewById(R.id.lutRecyclerView)
 
-        imageArea.setOnClickListener {
-            imagePicker.launch(Intent(this, GalleryActivity::class.java))
-        }
-
-        LutUtils.seedPresetFilters(this)
-        loadFilters()
-
-        filterSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                selectedFilter = if (position == 0) null else filterFiles[position - 1]
-                updateApplyButton()
+        // ---- GLSurfaceView：GPU 直出预览（复用 RawPipeline）----
+        previewView.setEGLContextFactory(object : GLSurfaceView.EGLContextFactory {
+            override fun createContext(egl: EGL10, display: EGLDisplay, eglConfig: EGLConfig): EGLContext {
+                val attr = intArrayOf(0x3098, 3, 0x3038) // EGL_CONTEXT_CLIENT_VERSION = 3
+                return egl.eglCreateContext(display, eglConfig, EGL10.EGL_NO_CONTEXT, attr)
             }
-            override fun onNothingSelected(parent: AdapterView<*>?) {}
+            override fun destroyContext(egl: EGL10, display: EGLDisplay, context: EGLContext) {
+                egl.eglDestroyContext(display, context)
+            }
+        })
+        previewView.setRenderer(LutRenderer())
+        previewView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
+
+        // ---- 按住图片显示原图，松开恢复滤镜 ----
+        // 触摸逻辑挂在 imageArea 上（它覆盖整个图片区，含 GLSurfaceView）
+        imageArea.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    pressed = true
+                    pressHandler.removeCallbacks(showOriginalRunnable)
+                    pressHandler.removeCallbacks(clickRunnable)
+                    pressHandler.postDelayed(showOriginalRunnable, 500)
+                }
+                android.view.MotionEvent.ACTION_UP,
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    val wasPressed = pressed
+                    pressed = false
+                    pressHandler.removeCallbacks(showOriginalRunnable)
+                    if (showOriginal) {
+                        showOriginal = false
+                        renderPreview()
+                    } else if (wasPressed && event.actionMasked == android.view.MotionEvent.ACTION_UP) {
+                        // 短按（未触发按住）：重新选择图片
+                        pressHandler.post(clickRunnable)
+                    }
+                }
+            }
+            true
         }
 
-        btnApply.setOnClickListener {
-            applyFilter()
-        }
+        // ---- 滤镜选择栏（复用主页 LutSelectorAdapter）----
+        lutRecyclerView.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+        lutAdapter = LutSelectorAdapter(context = this,
+            onItemClick = { entry ->
+                val path = entry.file?.absolutePath ?: ""
+                currentFilterPath = path
+                currentLut = entry.lutData
+                tvFilterName.text = if (path.isNotEmpty()) entry.name else ""
+                updateSaveEnabled()
+                renderPreview()
+            },
+            onPhase1Complete = null
+        )
+        lutRecyclerView.adapter = lutAdapter
+
+        // ---- 强度滑块：实时重渲染（预览，GPU 直出无读回，流畅）----
+        seekIntensity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) renderPreview()
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
 
         btnSave.setOnClickListener {
-            val bmp = resultBitmap ?: return@setOnClickListener
-            val name = "filter_${System.currentTimeMillis()}.jpg"
-            val (_, savedUri) = saveBitmapAsJpeg(this, bmp, name)
-            Toast.makeText(this, "已保存到 DCIM/Camera/", Toast.LENGTH_SHORT).show()
+            saveFullRes()
+        }
+
+        if (LutUtils.isStorageAuthorized(this)) {
+            LutUtils.seedPresetFilters(this)
+            loadLutList()
+        } else if (LutUtils.shouldRequestStorage(this)) {
+            LutUtils.requestStorageAccess(this)
         }
     }
 
-    private fun loadFilters() {
-        val dir = getExternalFilesDir("filters") ?: filesDir
-        filterFiles = if (dir.isDirectory) {
-            dir.listFiles()
-                ?.filter { it.isFile && it.name.endsWith(".cube") }
-                ?.sortedByDescending { it.lastModified() }
-                .orEmpty()
-        } else emptyList()
-        filterNames = filterFiles.map { it.nameWithoutExtension }
-        val items = mutableListOf("（选择滤镜）")
-        items.addAll(filterNames)
-        filterSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, items)
+    override fun onResume() {
+        super.onResume()
+        previewView.onResume()
+        if (LutUtils.isStorageAuthorized(this)) {
+            LutUtils.seedPresetFilters(this)
+            loadLutList()
+        }
     }
 
-    private fun updateApplyButton() {
-        btnApply.isEnabled = selectedImageUri != null && selectedFilter != null
+    override fun onPause() {
+        super.onPause()
+        previewView.onPause()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        pipeline = null
+    }
+
+    private fun loadLutList() {
+        if (!LutUtils.isStorageAuthorized(this)) {
+            if (LutUtils.shouldRequestStorage(this)) LutUtils.requestStorageAccess(this)
+            return
+        }
+        lutAdapter.loadFromDirectory(LutUtils.filtersDir())
+    }
+
+    /** 当前是否为「无」滤镜（或强度为 0） */
+    private fun hasActiveFilter(): Boolean {
+        return currentFilterPath.isNotEmpty() && currentLut != null && seekIntensity.progress > 0
+    }
+
+    private fun updateSaveEnabled() {
+        btnSave.isEnabled = originalBitmap != null && hasActiveFilter()
+    }
+
+    /** 预览：请求 GL 线程重绘（GPU 直出，无读回）。 */
+    private fun renderPreview() {
+        if (originalBitmap == null) return
+        previewView.requestRender()
+    }
+
+    /** 保存：在 GL 线程用离屏 FBO 渲染全分辨率并读回，写相册。 */
+    private fun saveFullRes() {
+        val bmp = originalBitmap ?: return
+        if (!glReady) return
+        val lut = currentLut ?: return
+        val intensity = seekIntensity.progress / 100f
+        if (intensity <= 0f) return
+
+        btnSave.isEnabled = false
+        progressBar.visibility = View.VISIBLE
+
+        previewView.queueEvent {
+            val full = pipeline?.applyLutToBitmap(bmp, lut, intensity)
+            mainHandler.post {
+                progressBar.visibility = View.GONE
+                if (full != null) {
+                    resultBitmap = full
+                    val name = "filter_${System.currentTimeMillis()}.jpg"
+                    val (_, savedUri) = saveBitmapAsJpeg(this, full, name)
+                    Toast.makeText(this, "已保存到 DCIM/Camera/", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "滤镜渲染失败", Toast.LENGTH_SHORT).show()
+                }
+                updateSaveEnabled()
+            }
+        }
+        previewView.requestRender()
+    }
+
+    /** 解码全尺寸位图（GPU 分块在 RawPipeline 内部处理）。 */
+    private fun decodeFullBitmap(uri: Uri): Bitmap? {
+        return try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                BitmapFactory.decodeStream(input)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "decodeFullBitmap failed", e)
+            null
+        }
     }
 
     companion object {
         private const val TAG = "ApplyFilter"
-        private const val STRIP_HEIGHT = 64
     }
-
-    private fun applyFilter() {
-        val uri = selectedImageUri ?: return
-        val filterFile = selectedFilter ?: return
-
-        btnApply.isEnabled = false
-        progressBar.visibility = View.VISIBLE
-        resultImage.visibility = View.GONE
-        tvResultLabel.visibility = View.GONE
-
-        Thread {
-            try {
-                val lut = LutUtils.loadCubeFile(filterFile) ?: run {
-                    runOnUiThread { Toast.makeText(this, "滤镜文件加载失败", Toast.LENGTH_SHORT).show() }
-                    return@Thread
-                }
-
-                Log.d(TAG, "开始分块处理: $uri")
-                val result = decodeAndApplyInStrips(uri, lut)
-
-                if (result == null) {
-                    runOnUiThread { Toast.makeText(this, "图片加载失败", Toast.LENGTH_SHORT).show() }
-                    return@Thread
-                }
-
-                Log.d(TAG, "处理完成: ${result.width}x${result.height}")
-                runOnUiThread {
-                    resultBitmap = result
-                    progressBar.visibility = View.GONE
-                    resultImage.setImageBitmap(result)
-                    resultImage.visibility = View.VISIBLE
-                    tvResultLabel.visibility = View.VISIBLE
-                    btnSave.visibility = View.VISIBLE
-                    btnApply.isEnabled = true
-                    scrollView.post { scrollView.fullScroll(View.FOCUS_DOWN) }
-                }
-            } catch (e: Throwable) {
-                Log.e(TAG, "处理失败", e)
-                runOnUiThread {
-                    progressBar.visibility = View.GONE
-                    Toast.makeText(this, "处理失败: ${e.message}", Toast.LENGTH_LONG).show()
-                    btnApply.isEnabled = true
-                }
-            }
-        }.start()
-    }
-
-    /** 用 BitmapRegionDecoder 逐条解码+处理，避免同时持有全尺寸输入和输出图 */
-    private fun decodeAndApplyInStrips(uri: Uri, lut: FloatArray): Bitmap? {
-        val pfd = contentResolver.openFileDescriptor(uri, "r") ?: return null
-        return try {
-            val decoder = BitmapRegionDecoder.newInstance(pfd.fileDescriptor, false)
-            val w = decoder.width
-            val h = decoder.height
-            Log.d(TAG, "原图尺寸: ${w}x${h}")
-
-            val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            val lutSize = 33
-            val lutSizeMinus1 = (lutSize - 1).toFloat()
-
-            for (y in 0 until h step STRIP_HEIGHT) {
-                val curH = minOf(STRIP_HEIGHT, h - y)
-                val strip = decoder.decodeRegion(Rect(0, y, w, y + curH),
-                    BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 })
-
-                val pixels = IntArray(w * curH)
-                strip.getPixels(pixels, 0, w, 0, 0, w, curH)
-
-                for (row in 0 until curH) {
-                    val rowOffset = row * w
-                    for (x in 0 until w) {
-                        val i = rowOffset + x
-                        val argb = pixels[i]
-                        val a = (argb ushr 24) and 0xFF
-                        val r = (argb ushr 16) and 0xFF
-                        val g = (argb ushr 8) and 0xFF
-                        val b = argb and 0xFF
-
-                        val fr = r / 255.0f * lutSizeMinus1
-                        val fg = g / 255.0f * lutSizeMinus1
-                        val fb = b / 255.0f * lutSizeMinus1
-
-                        val r0 = fr.toInt(); val r1 = (r0 + 1).coerceAtMost(lutSize - 1)
-                        val g0 = fg.toInt(); val g1 = (g0 + 1).coerceAtMost(lutSize - 1)
-                        val b0 = fb.toInt(); val b1 = (b0 + 1).coerceAtMost(lutSize - 1)
-
-                        val dr = fr - r0; val dg = fg - g0; val db = fb - b0
-
-                        fun idx(r: Int, g: Int, b: Int): Int = (b * lutSize * lutSize + g * lutSize + r) * 3
-
-                        val c000 = lut[idx(r0, g0, b0)]; val c100 = lut[idx(r1, g0, b0)]
-                        val c010 = lut[idx(r0, g1, b0)]; val c110 = lut[idx(r1, g1, b0)]
-                        val c001 = lut[idx(r0, g0, b1)]; val c101 = lut[idx(r1, g0, b1)]
-                        val c011 = lut[idx(r0, g1, b1)]; val c111 = lut[idx(r1, g1, b1)]
-
-                        val or = lerp(lerp(lerp(c000, c100, dr), lerp(c010, c110, dr), dg),
-                                      lerp(lerp(c001, c101, dr), lerp(c011, c111, dr), dg), db)
-                        val og = lerp(lerp(lerp(lut[idx(r0,g0,b0)+1], lut[idx(r1,g0,b0)+1], dr),
-                                           lerp(lut[idx(r0,g1,b0)+1], lut[idx(r1,g1,b0)+1], dr), dg),
-                                      lerp(lerp(lut[idx(r0,g0,b1)+1], lut[idx(r1,g0,b1)+1], dr),
-                                           lerp(lut[idx(r0,g1,b1)+1], lut[idx(r1,g1,b1)+1], dr), dg), db)
-                        val ob = lerp(lerp(lerp(lut[idx(r0,g0,b0)+2], lut[idx(r1,g0,b0)+2], dr),
-                                           lerp(lut[idx(r0,g1,b0)+2], lut[idx(r1,g1,b0)+2], dr), dg),
-                                      lerp(lerp(lut[idx(r0,g0,b1)+2], lut[idx(r1,g0,b1)+2], dr),
-                                           lerp(lut[idx(r0,g1,b1)+2], lut[idx(r1,g1,b1)+2], dr), dg), db)
-
-                        val nr = (or * 255f).toInt().coerceIn(0, 255)
-                        val ng = (og * 255f).toInt().coerceIn(0, 255)
-                        val nb = (ob * 255f).toInt().coerceIn(0, 255)
-                        pixels[i] = (a shl 24) or (nr shl 16) or (ng shl 8) or nb
-                    }
-                }
-
-                out.setPixels(pixels, 0, w, 0, y, w, curH)
-                strip.recycle()
-            }
-
-            decoder.recycle()
-            out
-        } finally {
-            pfd.close()
-        }
-    }
-
-    private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
 }

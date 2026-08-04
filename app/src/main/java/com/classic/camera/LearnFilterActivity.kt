@@ -345,8 +345,13 @@ class LearnFilterActivity : AppCompatActivity() {
     }
 
     private fun saveCubeFile(name: String) {
+        if (!LutUtils.isStorageAuthorized(this)) {
+            if (LutUtils.shouldRequestStorage(this)) LutUtils.requestStorageAccess(this)
+            Toast.makeText(this, "需要存储权限才能保存滤镜", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         val lut = lastLut ?: return
-        val dir = getExternalFilesDir("filters") ?: filesDir
+        val dir = LutUtils.filtersDir()
         dir.mkdirs()
         val file = File(dir, "${name}.cube")
 
