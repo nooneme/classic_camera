@@ -1384,13 +1384,22 @@ class MainActivity : AppCompatActivity() {
             } else emptySet()
 
             if (physicalIds.isNotEmpty()) {
+                // 逻辑相机与它的物理子镜头是两条都可能提供 RAW 的路径。
+                // 先收集各物理子镜头。
+                var childRawCount = 0
                 for (physId in physicalIds) {
                     claimedPhysical.add(physId)
                     val physChar = cameraManager.getCameraCharacteristics(physId)
                     if (supportsRaw(physChar)) {
+                        childRawCount++
                         lenses.add(buildLensInfo(id, physId, physChar,
                             "Physical[$physId] (under Logical[$id])"))
                     }
+                }
+                // 若子镜头都不支持 RAW，但逻辑镜头自身支持（部分 OEM/老设备只在
+                // 逻辑流上报 CAPABILITY_RAW），补上逻辑镜头本身，避免整支主摄被漏掉。
+                if (childRawCount == 0 && supportsRaw(characteristics)) {
+                    lenses.add(buildLensInfo(id, null, characteristics, "Logical[$id]"))
                 }
             } else {
                 if (id !in claimedPhysical && supportsRaw(characteristics)) {
@@ -1398,7 +1407,11 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        return lenses
+
+        // 兜底去重：同一传感器可能既以独立镜头身份出现、又被其逻辑父镜头收集，
+        // 以 lensId（logical:physical）为键去重，保证与遍历顺序无关。
+        val seen = mutableSetOf<String>()
+        return lenses.filter { seen.add(LensStore.lensId(it)) }
     }
 
     private fun buildLensInfo(
