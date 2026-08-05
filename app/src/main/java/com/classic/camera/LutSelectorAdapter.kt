@@ -74,9 +74,8 @@ class LutSelectorAdapter(
                     if (ex != null) {
                         list.add(ex)
                     } else {
-                        // 优先同步读取磁盘缓存的缩略图，避免进入页面后先空白再异步加载
-                        val cachedThumb = LutThumbnail.cachedThumbnail(context, file)
-                        list.add(LutEntry(file.nameWithoutExtension, file, null, cachedThumb))
+                        // 不在主线程读磁盘缩略图，交给 Phase 2 后台加载
+                        list.add(LutEntry(file.nameWithoutExtension, file, null, null))
                     }
                 }
         }

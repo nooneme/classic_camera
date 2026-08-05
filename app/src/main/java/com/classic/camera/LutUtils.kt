@@ -78,7 +78,7 @@ object LutUtils {
                 val t = line.trim()
                 if (!inData) {
                     if (t.startsWith("LUT_3D_SIZE", ignoreCase = true)) {
-                        val tok = t.split(Regex("\\s+"))
+                        val tok = splitWs(t)
                         size = tok.getOrNull(1)?.toIntOrNull() ?: 0
                     } else if (size > 0 &&
                         t.isNotEmpty() && !t.startsWith("#") &&
@@ -91,12 +91,29 @@ object LutUtils {
                 }
                 if (t.isEmpty() || t.startsWith("#")) continue
                 if (floats.size >= size * size * size * 3) break
-                val tok = t.split(Regex("\\s+"))
+                val tok = splitWs(t)
                 if (tok.size < 3) continue
                 for (k in 0..2) floats.add(tok[k].toFloatOrNull() ?: return null)
             }
         }
         return if (size > 0 && floats.size == size * size * size * 3) floats.toFloatArray() else null
+    }
+
+    /** 手工按空白切分，避免每行 new 并编译 Regex（比 split(Regex) 快得多）。 */
+    private fun splitWs(line: String): ArrayList<String> {
+        val out = ArrayList<String>(4)
+        var i = 0
+        val n = line.length
+        while (i < n) {
+            // 跳过空白
+            while (i < n && line[i] <= ' ') i++
+            if (i >= n) break
+            val start = i
+            // 收集非空白 token
+            while (i < n && line[i] > ' ') i++
+            out.add(line.substring(start, i))
+        }
+        return out
     }
 
     fun createLutBitmap(lutFloatArray: FloatArray): Bitmap {
