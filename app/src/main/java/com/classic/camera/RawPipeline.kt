@@ -112,6 +112,17 @@ class RawPipeline : GLSurfaceView.Renderer {
     @Volatile var toneMapE = 0.14f
     @Volatile var highlightReconstructionEnabled = false
 
+    // ---- 线性域色调映射（RawTherapee 风格 ①②③）----
+    @Volatile var exposureComp = 0f        // EV，expScale = 2^EV
+    @Volatile var hlComp = 0f              // 高光压缩量 0..100（0=关）
+    @Volatile var hlThreshold = 0f         // 高光压缩阈值 0..100
+    @Volatile var blackPoint = 0f          // 黑点 -100..100（映射 b = ±0.2）
+    @Volatile var shadowComp = 50f         // 阴影压缩 0..100
+    @Volatile var contrast = 0f            // 对比度 -100..100
+    @Volatile var autoContrast = true      // 直方图自适应对比度（GPU/CPU 统计平均亮度）
+    @Volatile var lumaAvg = 0.18f          // 平均亮度锚点（autoContrast 时由统计更新）
+    private var lumaAvgFrame = 0           // 统计节流计数
+
     private var rawDirectBuf: java.nio.ByteBuffer? = null
     private var texAllocated = false
     private var texW = 0
@@ -141,6 +152,12 @@ class RawPipeline : GLSurfaceView.Renderer {
     @Volatile var toneCurvePoints: FloatArray? = null
     private var toneCurveTexId = 0
     @Volatile var toneCurveDirty = false
+
+    // ---- 阴影/黑点曲线 LUT（②，亮度→增益）----
+    private var shCurveTexId = 0
+    private var lastBlackPoint = 0f
+    private var lastShadowComp = 50f
+    private var shCurveDirty = true
 
     // ---- LSC 镜头阴影校正 ----
     @Volatile var lscGainMap: FloatArray? = null
@@ -400,6 +417,9 @@ class RawPipeline : GLSurfaceView.Renderer {
     private class ToneMapUniforms(val id: Int) {
         var aPos = 0; var aTexCoord = 0
         var uInputTex = 0; var uToneMapD = 0; var uToneMapE = 0
+        var uExpScale = 0; var uHlComp = 0; var uHlThreshold = 0
+        var uBlack = 0; var uShadowComp = 0
+        var uContrast = 0; var uAvg = 0; var uAutoContrast = 0; var uShCurve = 0
         var uAspectScale = 0; var uOrientation = 0; var uMirror = 0
 
         fun lookup() {
@@ -408,6 +428,15 @@ class RawPipeline : GLSurfaceView.Renderer {
             uInputTex = GLES30.glGetUniformLocation(id, "uInputTex")
             uToneMapD = GLES30.glGetUniformLocation(id, "uToneMapD")
             uToneMapE = GLES30.glGetUniformLocation(id, "uToneMapE")
+            uExpScale = GLES30.glGetUniformLocation(id, "uExpScale")
+            uHlComp = GLES30.glGetUniformLocation(id, "uHlComp")
+            uHlThreshold = GLES30.glGetUniformLocation(id, "uHlThreshold")
+            uBlack = GLES30.glGetUniformLocation(id, "uBlack")
+            uShadowComp = GLES30.glGetUniformLocation(id, "uShadowComp")
+            uContrast = GLES30.glGetUniformLocation(id, "uContrast")
+            uAvg = GLES30.glGetUniformLocation(id, "uAvg")
+            uAutoContrast = GLES30.glGetUniformLocation(id, "uAutoContrast")
+            uShCurve = GLES30.glGetUniformLocation(id, "uShCurve")
             uAspectScale = GLES30.glGetUniformLocation(id, "uAspectScale")
             uOrientation = GLES30.glGetUniformLocation(id, "uOrientation")
             uMirror = GLES30.glGetUniformLocation(id, "uMirror")
@@ -458,6 +487,8 @@ class RawPipeline : GLSurfaceView.Renderer {
         dsBufFbo = 0; dsBufTexId = 0; dsBufW = 0; dsBufH = 0
         usBufFbo = 0; usBufTexId = 0; usBufW = 0; usBufH = 0
         bayerDsBufFbo = 0; bayerDsBufTexId = 0; bayerDsBufW = 0; bayerDsBufH = 0
+
+        shCurveTexId = 0; shCurveDirty = true
 
         progBlit = createProgram(BLIT_VS, BLIT_FS)
 
@@ -815,6 +846,119 @@ class RawPipeline : GLSurfaceView.Renderer {
         else Pair(imageAspect / viewAspect, 1f)
     }
 
+    // ====================== ② 阴影/黑点曲线 LUT ======================
+
+    // 移植自 RawTherapee curves.h：baseu(x,m1,m2) = 1 - basel(1-x,m1,m2)
+    private fun rtBasel(x: Double, m1: Double, m2: Double): Double {
+        if (x <= 0.0) return 0.0
+        val k = Math.sqrt((m1 - 1.0) * (m1 - m2) * 0.5) / (1.0 - m2)
+        val l = (m1 - m2) / (1.0 - m2) + k
+        val lx = Math.log(x)
+        return m2 * x + (1.0 - m2) * (2.0 - Math.exp(k * lx)) * Math.exp(l * lx)
+    }
+
+    private fun rtBaseu(x: Double, m1: Double, m2: Double): Double =
+        1.0 - rtBasel(1.0 - x, m1, m2)
+
+    private fun rtCupper(x: Double, m: Double, hr: Double): Double {
+        if (hr > 1.0) return rtBaseu(x, m, 2.0 * (hr - 1.0) / m)
+        val x1 = (1.0 - hr) / m
+        val x2 = x1 + hr
+        return when {
+            x >= x2 -> 1.0
+            x < x1 -> x * m
+            else -> 1.0 - hr + hr * rtBaseu((x - x1) / hr, m, 0.0)
+        }
+    }
+
+    private fun rtClower(x: Double, m: Double, sr: Double): Double =
+        1.0 - rtCupper(1.0 - x, m, sr)
+
+    private fun rtClower2(x: Double, m: Double, sr: Double): Double {
+        val x1 = sr / 1.5 + 0.00001
+        if (x > x1 || sr < 0.001) return 1.0 - (1.0 - x) * m
+        val y1 = 1.0 - (1.0 - x1) * m
+        val q = 1.0 - x / x1
+        return y1 + m * (x - x1) - (1.0 - m) * q * q * q * q
+    }
+
+    private fun rtSimpleBaseCurve(x: Double, b: Double, sr: Double): Double {
+        if (b == 0.0) return x
+        if (b < 0) {
+            val m = 0.5
+            val slope = 1.0 + b
+            val y = -b + m * slope
+            return if (x > m) y + (x - m) * slope
+            else y * rtClower2(x / m, slope * m / y, 2.0 - sr)
+        } else {
+            val slope = 1.0 / (1.0 - b)
+            val m = b + (1.0 - b) * 0.25
+            val y = (m - b) * slope
+            return if (x <= m) rtClower(x / m, slope * m / y, sr) * y
+            else y + (x - m) * slope
+        }
+    }
+
+    /** 重建黑点/阴影曲线 LUT（亮度→增益），上传为 R16F 1D 纹理。 */
+    private fun rebuildShadowCurveLUT() {
+        if (shCurveTexId == 0) {
+            val t = IntArray(1)
+            GLES30.glGenTextures(1, t, 0)
+            shCurveTexId = t[0]
+        }
+        val b = (blackPoint / 100f).coerceIn(-1f, 1f) * 0.2f
+        val sr = 0.015f * shadowComp
+        val n = 256
+        val vals = DoubleArray(n)
+        for (i in 0 until n) {
+            val x = i.toDouble() / (n - 1)
+            val c = rtSimpleBaseCurve(x, b.toDouble(), sr.toDouble())
+            vals[i] = if (x > 1e-9) c / x else 1.0   // 存增益 = 输出/输入
+        }
+        val half = ByteBuffer.allocateDirect(n * 2).order(ByteOrder.nativeOrder())
+        val hb = half.asShortBuffer()
+        for (i in 0 until n) hb.put(floatToHalf(vals[i].toFloat()).toShort())
+        hb.rewind()
+        half.rewind()
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, shCurveTexId)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GL_R16F, n, 1, 0, GLES30.GL_RED, GL_HALF_FLOAT, half)
+        lastBlackPoint = blackPoint
+        lastShadowComp = shadowComp
+        shCurveDirty = false
+    }
+
+    /** ③ 稀疏采样 raw 数据更新平均亮度锚点（每约 8 帧一次，GL 线程）。 */
+    private fun updateLumaAvg() {
+        val buf = rawBuffer ?: return
+        val w = rawW; val h = rawH
+        if (w <= 0 || h <= 0) return
+        val shortBuf = buf.duplicate().order(ByteOrder.nativeOrder()).asShortBuffer()
+        val stepX = (w / 24).coerceAtLeast(1)
+        val stepY = (h / 16).coerceAtLeast(1)
+        var sum = 0.0; var n = 0
+        val bl = (blackLevelR + blackLevelOffset).toInt()
+        val wl = if (whiteLevel > 0f) whiteLevel else 1023f
+        var pos = 0
+        var y = 0
+        while (y < h) {
+            var x = 0
+            while (x < w) {
+                val v = (shortBuf.get(pos).toInt() and 0xFFFF) - bl
+                if (v > 0) { sum += v; n++ }
+                pos += stepX; x += stepX
+            }
+            pos += (stepY - 1) * w; y += stepY
+        }
+        if (n > 0) {
+            val avg = ((sum / n) / wl).toFloat()
+            lumaAvg = lumaAvg * 0.7f + avg * 0.3f
+        }
+    }
+
     // ====================== 预览渲染 ======================
 
     override fun onDrawFrame(gl: GL10?) {
@@ -1021,7 +1165,18 @@ class RawPipeline : GLSurfaceView.Renderer {
         // ---- Pass 5.5: 跳过降采样/高光重建/上采样（预览省电）----
         val toneMapInputTexId = ccmBufTexId
 
-        // ---- Pass 6: Reinhard 色调映射（全分辨率 → RGBA8）----
+        // ---- ③ 自适应对比度：周期性稀疏采样 raw 更新平均亮度 ----
+        if (autoContrast) {
+            lumaAvgFrame++
+            if (lumaAvgFrame % 8 == 0) updateLumaAvg()
+        }
+
+        // ---- ② 黑点/阴影曲线 LUT 重建（参数变化时）----
+        if (shCurveDirty || lastBlackPoint != blackPoint || lastShadowComp != shadowComp) {
+            rebuildShadowCurveLUT()
+        }
+
+        // ---- Pass 6: 线性域复合色调映射（①②③）----
         ensureToneMapBufFbo(w, h)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, toneMapBufFbo)
         GLES30.glViewport(0, 0, w, h)
@@ -1036,8 +1191,22 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, toneMapInputTexId)
         GLES30.glUniform1i(uniToneMap.uInputTex, 0)
+
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+        if (shCurveTexId != 0) GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, shCurveTexId)
+        GLES30.glUniform1i(uniToneMap.uShCurve, 2)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+
         GLES30.glUniform1f(uniToneMap.uToneMapD, toneMapD)
         GLES30.glUniform1f(uniToneMap.uToneMapE, toneMapE)
+        GLES30.glUniform1f(uniToneMap.uExpScale, Math.pow(2.0, exposureComp.toDouble()).toFloat())
+        GLES30.glUniform1f(uniToneMap.uHlComp, hlComp)
+        GLES30.glUniform1f(uniToneMap.uHlThreshold, hlThreshold)
+        GLES30.glUniform1f(uniToneMap.uBlack, (blackPoint / 100f).coerceIn(-1f, 1f) * 0.2f)
+        GLES30.glUniform1f(uniToneMap.uShadowComp, shadowComp)
+        GLES30.glUniform1f(uniToneMap.uContrast, contrast)
+        GLES30.glUniform1f(uniToneMap.uAvg, lumaAvg)
+        GLES30.glUniform1f(uniToneMap.uAutoContrast, if (autoContrast) 1f else 0f)
 
         drawQuadRaw(uniToneMap.aPos, uniToneMap.aTexCoord)
 
@@ -1570,8 +1739,20 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, captureToneMapInputTexId)
         GLES30.glUniform1i(uniToneMap.uInputTex, 0)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+        if (shCurveTexId != 0) GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, shCurveTexId)
+        GLES30.glUniform1i(uniToneMap.uShCurve, 2)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glUniform1f(uniToneMap.uToneMapD, toneMapD)
         GLES30.glUniform1f(uniToneMap.uToneMapE, toneMapE)
+        GLES30.glUniform1f(uniToneMap.uExpScale, Math.pow(2.0, exposureComp.toDouble()).toFloat())
+        GLES30.glUniform1f(uniToneMap.uHlComp, hlComp)
+        GLES30.glUniform1f(uniToneMap.uHlThreshold, hlThreshold)
+        GLES30.glUniform1f(uniToneMap.uBlack, (blackPoint / 100f).coerceIn(-1f, 1f) * 0.2f)
+        GLES30.glUniform1f(uniToneMap.uShadowComp, shadowComp)
+        GLES30.glUniform1f(uniToneMap.uContrast, contrast)
+        GLES30.glUniform1f(uniToneMap.uAvg, lumaAvg)
+        GLES30.glUniform1f(uniToneMap.uAutoContrast, if (autoContrast) 1f else 0f)
         drawQuadRaw(uniToneMap.aPos, uniToneMap.aTexCoord)
 
         // 色调曲线: curveBufTexId → gammaBufTexId
@@ -1932,6 +2113,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         if (lutTextureId != 0) { GLES30.glDeleteTextures(1, intArrayOf(lutTextureId), 0); lutTextureId = 0 }
         if (lscTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(lscTexId), 0); lscTexId = 0 }
         if (toneCurveTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(toneCurveTexId), 0); toneCurveTexId = 0 }
+        if (shCurveTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(shCurveTexId), 0); shCurveTexId = 0 }
         if (progBlit != 0) { GLES30.glDeleteProgram(progBlit); progBlit = 0 }
         if (dsBufTexId != 0) { GLES30.glDeleteTextures(1, intArrayOf(dsBufTexId), 0); dsBufTexId = 0 }
         if (dsBufFbo != 0) { GLES30.glDeleteFramebuffers(1, intArrayOf(dsBufFbo), 0); dsBufFbo = 0 }
@@ -2277,20 +2459,69 @@ void main() {
 }
 """.trimIndent()
 
-    // ===== 色调映射独立 Pass（Reinhard）=====
+    // ===== 线性域复合色调映射（RawTherapee ①②③：log高光肩部 + 黑点曲线 + 自适应对比度）=====
     private val TONE_MAP_FS = """
 #version 300 es
 precision highp float;
 uniform highp sampler2D uInputTex;
+uniform highp sampler2D uShCurve;
 uniform float uToneMapD;
 uniform float uToneMapE;
+uniform float uExpScale;      // 2^exposureComp
+uniform float uHlComp;        // 高光压缩量 0..100
+uniform float uHlThreshold;   // 高光压缩阈值 0..100
+uniform float uBlack;         // 黑点 b（≈±0.2）
+uniform float uShadowComp;    // 阴影压缩 0..100
+uniform float uContrast;      // 对比度 -100..100
+uniform float uAvg;           // 平均亮度锚点 [0,1]
+uniform float uAutoContrast;  // 1=自适应
 in vec2 vUV;
 out vec4 frag;
 
+const float SCALE = 65536.0;
+
+// ① log 肩部高光压缩（对照 RawTherapee curves.cc hlCurve，输入 0-65535 线性域）
+float hlCompress(float v, float expScale, float hlComp, float threshold) {
+    float comp = (max(0.0, log2(expScale)) + 1.0) * hlComp / 100.0;
+    if (comp <= 0.0) return expScale;
+    float shoulder = ((SCALE / max(1.0, expScale)) * (threshold / 100.0)) + 0.1;
+    if (v <= shoulder) return expScale;
+    float R = (v - shoulder) * comp / (SCALE - shoulder);
+    return log(1.0 + R * expScale) / R;
+}
+
+// ③ 绕平均亮度的对比度 S 曲线（对比度滑块 -100..100）
+float contrastS(float y, float avg, float c) {
+    float s = c >= 0.0 ? (1.0 + 2.0 * c / 100.0) : (1.0 / (1.0 - 2.0 * c / 100.0));
+    return avg + (y - avg) * s;
+}
+
 void main() {
-    vec3 rgb = texture(uInputTex, vUV).rgb;
+    // 还原到 0-65535 线性域（WB pass 已归一化到 ~[0,1]）
+    vec3 rgb = texture(uInputTex, vUV).rgb * SCALE;
+    rgb = max(rgb, 0.0);
+
+    // ① 高光 log 肩部 + 曝光（逐通道增益平均）
+    float tf = (hlCompress(rgb.r, uExpScale, uHlComp, uHlThreshold)
+              + hlCompress(rgb.g, uExpScale, uHlComp, uHlThreshold)
+              + hlCompress(rgb.b, uExpScale, uHlComp, uHlThreshold)) / 3.0;
+    rgb *= tf;
+
+    // ② 黑点/阴影曲线（亮度域查 LUT，增益是比值故域无关）
+    float Y = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    rgb *= texture(uShCurve, vec2(clamp(Y / SCALE, 0.0, 1.0), 0.5)).r;
+
+    // ③ 自适应对比度（亮度域，保持色相）
+    Y = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    float y01 = Y / SCALE;
+    float avg = mix(uAvg, 0.18, 1.0 - uAutoContrast);
+    rgb *= contrastS(y01, avg, uContrast) / max(y01, 1e-4);
+
+    // 回到 [0,1] 域，收敛（保留原 Reinhard 参数作最终压缩）
+    rgb /= SCALE;
     const float a = 2.51, b = 0.03, c = 2.43;
-    frag = vec4(rgb * (a * rgb + b) / (rgb * (c * rgb + uToneMapD) + uToneMapE), 1.0);
+    rgb = rgb * (a * rgb + b) / (rgb * (c * rgb + uToneMapD) + uToneMapE);
+    frag = vec4(max(rgb, 0.0), 1.0);
 }
 """.trimIndent()
 

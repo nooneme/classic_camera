@@ -218,6 +218,13 @@ class MainActivity : AppCompatActivity() {
             pipeline?.toneMapD = it.getFloat("tone_map_d", 0.59f)
             pipeline?.toneMapE = it.getFloat("tone_map_e", 0.14f)
             pipeline?.highlightReconstructionEnabled = it.getBoolean("highlight_reconstruction", false)
+            pipeline?.exposureComp = it.getFloat("exposure_comp", 0f)
+            pipeline?.hlComp = it.getFloat("hl_comp", 0f)
+            pipeline?.hlThreshold = it.getFloat("hl_threshold", 0f)
+            pipeline?.blackPoint = it.getFloat("black_point", 0f)
+            pipeline?.shadowComp = it.getFloat("shadow_comp", 50f)
+            pipeline?.contrast = it.getFloat("contrast", 0f)
+            pipeline?.autoContrast = it.getBoolean("auto_contrast", true)
             colorTempKelvin = it.getInt("color_temp_kelvin", 6500)
             colorTint = it.getInt("color_tint", 0)
         }
@@ -744,6 +751,179 @@ class MainActivity : AppCompatActivity() {
         layout.addView(tvToneMapD)
         layout.addView(sbToneMapD)
 
+        // ---- 曝光补偿 EV（①）----
+        val evDefault = prefs.getFloat("exposure_comp", 0f)
+        val tvEv = TextView(this).apply {
+            text = "曝光补偿 EV: ${"%.2f".format(evDefault)}"
+            textSize = 15f
+            setPadding(48, 8, 48, 4)
+        }
+        val sbEv = Slider(this).apply {
+            valueFrom = 0f; stepSize = 1f; setTickVisible(false); setLabelBehavior(2)
+            valueTo = 80f
+            value = ((evDefault + 2f) * 20).roundToInt().coerceIn(0, 80).toFloat()
+            setPadding(48, 0, 48, 16)
+            addOnChangeListener { _, value, _ ->
+                val v = (value.toInt() / 20f) - 2f
+                tvEv.text = "曝光补偿 EV: ${"%.2f".format(v)}"
+                glSurfaceView.queueEvent { pipeline?.exposureComp = v }
+            }
+            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) {
+                    showToneMapPreview(tvEv, slider)
+                }
+                override fun onStopTrackingTouch(slider: Slider) {
+                    val v = (slider.value.toInt() / 20f) - 2f
+                    prefs.edit().putFloat("exposure_comp", v).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+        layout.addView(tvEv); layout.addView(sbEv)
+
+        // ---- 高光压缩量（①）----
+        val hlCompDefault = prefs.getFloat("hl_comp", 0f)
+        val tvHlComp = TextView(this).apply {
+            text = "高光压缩量: ${hlCompDefault.toInt()}"
+            textSize = 15f
+            setPadding(48, 8, 48, 4)
+        }
+        val sbHlComp = Slider(this).apply {
+            valueFrom = 0f; stepSize = 1f; setTickVisible(false); setLabelBehavior(2)
+            valueTo = 100f; value = hlCompDefault.coerceIn(0f, 100f)
+            setPadding(48, 0, 48, 16)
+            addOnChangeListener { _, value, _ ->
+                tvHlComp.text = "高光压缩量: ${value.toInt()}"
+                glSurfaceView.queueEvent { pipeline?.hlComp = value }
+            }
+            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) { showToneMapPreview(tvHlComp, slider) }
+                override fun onStopTrackingTouch(slider: Slider) {
+                    prefs.edit().putFloat("hl_comp", slider.value).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+        layout.addView(tvHlComp); layout.addView(sbHlComp)
+
+        // ---- 高光压缩阈值（①）----
+        val hlThDefault = prefs.getFloat("hl_threshold", 0f)
+        val tvHlTh = TextView(this).apply {
+            text = "高光压缩阈值: ${hlThDefault.toInt()}"
+            textSize = 15f
+            setPadding(48, 8, 48, 4)
+        }
+        val sbHlTh = Slider(this).apply {
+            valueFrom = 0f; stepSize = 1f; setTickVisible(false); setLabelBehavior(2)
+            valueTo = 100f; value = hlThDefault.coerceIn(0f, 100f)
+            setPadding(48, 0, 48, 16)
+            addOnChangeListener { _, value, _ ->
+                tvHlTh.text = "高光压缩阈值: ${value.toInt()}"
+                glSurfaceView.queueEvent { pipeline?.hlThreshold = value }
+            }
+            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) { showToneMapPreview(tvHlTh, slider) }
+                override fun onStopTrackingTouch(slider: Slider) {
+                    prefs.edit().putFloat("hl_threshold", slider.value).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+        layout.addView(tvHlTh); layout.addView(sbHlTh)
+
+        // ---- 黑点（②）----
+        val bpDefault = prefs.getFloat("black_point", 0f)
+        val tvBlack = TextView(this).apply {
+            text = "黑点: ${bpDefault.toInt()}"
+            textSize = 15f
+            setPadding(48, 8, 48, 4)
+        }
+        val sbBlack = Slider(this).apply {
+            valueFrom = 0f; stepSize = 1f; setTickVisible(false); setLabelBehavior(2)
+            valueTo = 200f; value = (bpDefault + 100f).coerceIn(0f, 200f)
+            setPadding(48, 0, 48, 16)
+            addOnChangeListener { _, value, _ ->
+                val v = value.toInt() - 100
+                tvBlack.text = "黑点: $v"
+                glSurfaceView.queueEvent { pipeline?.blackPoint = v.toFloat() }
+            }
+            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) { showToneMapPreview(tvBlack, slider) }
+                override fun onStopTrackingTouch(slider: Slider) {
+                    val v = slider.value.toInt() - 100
+                    prefs.edit().putFloat("black_point", v.toFloat()).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+        layout.addView(tvBlack); layout.addView(sbBlack)
+
+        // ---- 阴影压缩（②）----
+        val shCompDefault = prefs.getFloat("shadow_comp", 50f)
+        val tvShComp = TextView(this).apply {
+            text = "阴影压缩: ${shCompDefault.toInt()}"
+            textSize = 15f
+            setPadding(48, 8, 48, 4)
+        }
+        val sbShComp = Slider(this).apply {
+            valueFrom = 0f; stepSize = 1f; setTickVisible(false); setLabelBehavior(2)
+            valueTo = 100f; value = shCompDefault.coerceIn(0f, 100f)
+            setPadding(48, 0, 48, 16)
+            addOnChangeListener { _, value, _ ->
+                tvShComp.text = "阴影压缩: ${value.toInt()}"
+                glSurfaceView.queueEvent { pipeline?.shadowComp = value }
+            }
+            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) { showToneMapPreview(tvShComp, slider) }
+                override fun onStopTrackingTouch(slider: Slider) {
+                    prefs.edit().putFloat("shadow_comp", slider.value).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+        layout.addView(tvShComp); layout.addView(sbShComp)
+
+        // ---- 对比度（③）----
+        val contDefault = prefs.getFloat("contrast", 0f)
+        val tvContrast = TextView(this).apply {
+            text = "对比度: ${contDefault.toInt()}"
+            textSize = 15f
+            setPadding(48, 8, 48, 4)
+        }
+        val sbContrast = Slider(this).apply {
+            valueFrom = 0f; stepSize = 1f; setTickVisible(false); setLabelBehavior(2)
+            valueTo = 200f; value = (contDefault + 100f).coerceIn(0f, 200f)
+            setPadding(48, 0, 48, 16)
+            addOnChangeListener { _, value, _ ->
+                val v = value.toInt() - 100
+                tvContrast.text = "对比度: $v"
+                glSurfaceView.queueEvent { pipeline?.contrast = v.toFloat() }
+            }
+            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) { showToneMapPreview(tvContrast, slider) }
+                override fun onStopTrackingTouch(slider: Slider) {
+                    val v = slider.value.toInt() - 100
+                    prefs.edit().putFloat("contrast", v.toFloat()).apply()
+                    hideToneMapPreview()
+                }
+            })
+        }
+        layout.addView(tvContrast); layout.addView(sbContrast)
+
+        // ---- 自适应对比度（③）----
+        val autoContDefault = prefs.getBoolean("auto_contrast", true)
+        val switchAutoContrast = Switch(this).apply {
+            isChecked = autoContDefault
+            text = "自适应对比度（按画面平均亮度）"
+            textSize = 16f
+            setPadding(48, 8, 48, 16)
+            setOnCheckedChangeListener { _, isChecked ->
+                prefs.edit().putBoolean("auto_contrast", isChecked).apply()
+                glSurfaceView.queueEvent { pipeline?.autoContrast = isChecked }
+            }
+        }
+        layout.addView(switchAutoContrast)
+
         val scrollView = ScrollView(this)
 
         // ---- 色调曲线编辑器（直接嵌入弹窗） ----
@@ -784,7 +964,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        layout.addView(curveView)
 
         // ---- LUT 应用强度 ----
         val lutIntensity = prefs.getFloat("lut_intensity", 1f)
@@ -915,6 +1094,34 @@ class MainActivity : AppCompatActivity() {
                 tvToneMapD.text = "色调 D（默认0.59）: 0.59"
                 glSurfaceView.queueEvent { pipeline?.toneMapD = 0.59f }
                 prefs.edit().putFloat("tone_map_d", 0.59f).apply()
+                // 重置线性域色调映射参数
+                sbEv.value = 40f
+                tvEv.text = "曝光补偿 EV: 0.00"
+                glSurfaceView.queueEvent { pipeline?.exposureComp = 0f }
+                prefs.edit().putFloat("exposure_comp", 0f).apply()
+                sbHlComp.value = 0f
+                tvHlComp.text = "高光压缩量: 0"
+                glSurfaceView.queueEvent { pipeline?.hlComp = 0f }
+                prefs.edit().putFloat("hl_comp", 0f).apply()
+                sbHlTh.value = 0f
+                tvHlTh.text = "高光压缩阈值: 0"
+                glSurfaceView.queueEvent { pipeline?.hlThreshold = 0f }
+                prefs.edit().putFloat("hl_threshold", 0f).apply()
+                sbBlack.value = 100f
+                tvBlack.text = "黑点: 0"
+                glSurfaceView.queueEvent { pipeline?.blackPoint = 0f }
+                prefs.edit().putFloat("black_point", 0f).apply()
+                sbShComp.value = 50f
+                tvShComp.text = "阴影压缩: 50"
+                glSurfaceView.queueEvent { pipeline?.shadowComp = 50f }
+                prefs.edit().putFloat("shadow_comp", 50f).apply()
+                sbContrast.value = 100f
+                tvContrast.text = "对比度: 0"
+                glSurfaceView.queueEvent { pipeline?.contrast = 0f }
+                prefs.edit().putFloat("contrast", 0f).apply()
+                switchAutoContrast.isChecked = true
+                prefs.edit().putBoolean("auto_contrast", true).apply()
+                glSurfaceView.queueEvent { pipeline?.autoContrast = true }
                 // 重置色调曲线为 y=x
                 curveView.resetCurve()
                 val defaultCurve = ToneCurve()
@@ -942,6 +1149,9 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putInt("color_tint", 0).apply()
             }
         }
+        // ---- 自定义色调曲线编辑器（置于设置项最底部、恢复默认上方）----
+        layout.addView(curveView)
+
         layout.addView(btnReset)
 
         scrollView.addView(layout)
@@ -970,7 +1180,7 @@ class MainActivity : AppCompatActivity() {
         }
         toneMapKeepLabel = keepLabel
         toneMapLabelOriginalColor = keepLabel.currentTextColor
-        keepLabel.setTextColor(0xFFFFFFFF.toInt())
+        keepLabel.setTextColor(getAttrColor(R.attr.textPrimary))
         for (child in settingsLayoutChildren) {
             child.alpha = if (child === keepLabel || child === keepSlider) 1f else 0f
         }
