@@ -1149,16 +1149,19 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putInt("color_tint", 0).apply()
             }
         }
-        // ---- 自定义色调曲线编辑器（置于设置项最底部、恢复默认上方）----
+        // ---- 自定义色调曲线编辑器（置于设置项最底部）----
         layout.addView(curveView)
-
-        layout.addView(btnReset)
 
         scrollView.addView(layout)
         settingsDialog = AlertDialog.Builder(this)
             .setView(scrollView)
             .setPositiveButton("完成", null)
             .show()
+        // 把「恢复默认」按钮插到「完成」按钮左边
+        val posButton = settingsDialog?.getButton(AlertDialog.BUTTON_POSITIVE)
+        val panel = posButton?.parent as? ViewGroup
+        val posIndex = panel?.indexOfChild(posButton)
+        if (panel != null && posIndex != null) panel.addView(btnReset, posIndex)
         settingsDialog?.window?.setBackgroundDrawableResource(R.drawable.dialog_settings_bg)
         settingsDialog?.window?.setLayout(
             (resources.displayMetrics.widthPixels * 0.9).toInt(),
