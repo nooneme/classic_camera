@@ -535,6 +535,7 @@ class GpuAlignMerge {
 
         shared float sRef[256];
         shared float sDiff[256];
+        shared float sCnt[256];
         void main() {
             uint tx = gl_WorkGroupID.x, ty = gl_WorkGroupID.y;
             uint lx = gl_LocalInvocationID.x, ly = gl_LocalInvocationID.y, tid = ly*16u+lx;
@@ -556,15 +557,29 @@ class GpuAlignMerge {
             float best = 1e10; int bdx=0,bdy=0;
             for (int dy=-4; dy<=4; dy++) for (int dx=-4; dx<=4; dx++) {
                 int ox = bx+dx, oy = by+dy;
-                int ax = clamp(gx+ox,0,sz.x-1), ay = clamp(gy+oy,0,sz.y-1);
-                float av = texelFetch(uAlt,ivec2(ax,ay),0).r;
-                sDiff[tid] = valid ? abs(sRef[tid] - av) : 0.0;
+                int ax = gx+ox, ay = gy+oy;
+                bool inBound = (ax >= 0 && ay >= 0 && ax < sz.x && ay < sz.y);
+                int cax = clamp(ax,0,sz.x-1), cay = clamp(ay,0,sz.y-1);
+                float av = texelFetch(uAlt,ivec2(cax,cay),0).r;
+                // 仅对参考与副帧均有效的像素累计差异；越界像素既不计差异也不计数量，
+                // 避免 clamp 产生的虚假边缘差异，同时不偏向把内容移出画面的偏移。
+                float contrib = (valid && inBound) ? 1.0 : 0.0;
+                float diff = (valid && inBound) ? abs(sRef[tid] - av) : 0.0;
+                // 中心偏移微惩罚：平坦区平局时偏向零偏移
+                diff += (valid && inBound) ? 1e-4 * (float(abs(ox)) + float(abs(oy))) : 0.0;
+                sDiff[tid] = diff;
+                sCnt[tid] = contrib;
                 memoryBarrierShared(); barrier();
                 for (int s=128; s>0; s>>=1) {
-                    if (tid < uint(s)) sDiff[tid] += sDiff[tid+uint(s)];
+                    if (tid < uint(s)) {
+                        sDiff[tid] += sDiff[tid+uint(s)];
+                        sCnt[tid] += sCnt[tid+uint(s)];
+                    }
                     memoryBarrierShared(); barrier();
                 }
-                if (tid==0u && sDiff[0] < best) { best = sDiff[0]; bdx=ox; bdy=oy; }
+                if (tid==0u && sCnt[0] > 0.0 && sDiff[0] / sCnt[0] < best) {
+                    best = sDiff[0] / sCnt[0]; bdx=ox; bdy=oy;
+                }
                 barrier();
             }
             if (tid==0u) {
@@ -616,7 +631,14 @@ class GpuAlignMerge {
                     float avg=sL1[0]/256.0;
                     float nd=max(1.0, avg*wl/8.0-10.0/8.0);
                     float wgt = (nd <= (300.0-10.0)/8.0) ? min(1.0/nd,10.0) : 0.0;
-                    wgtOut[base + f] = wgt;
+                    // 边缘衰减：靠近图像边界的 tile 对齐不可靠，按距离降低副帧权重
+                    float hcx = float(tx)*16.0 + 8.0;
+                    float hcy = float(ty)*16.0 + 8.0;
+                    float dx = min(hcx, float(sz.x) - hcx);
+                    float dy = min(hcy, float(sz.y) - hcy);
+                    float edgeD = min(dx, dy);
+                    float edgeW = clamp(edgeD / 32.0, 0.0, 1.0);
+                    wgtOut[base + f] = wgt * edgeW;
                 }
                 memoryBarrierShared(); barrier();
             }

@@ -651,8 +651,8 @@ class CameraController(
             var dngName = ""
             var jpgName = ""
             try {
-                val numTx = (w + 16 - 1) / 16
-                val numTy = (h + 16 - 1) / 16
+                val numTx = (w + 32 - 1) / 32
+                val numTy = (h + 32 - 1) / 32
                 val frameArr = buffers.toTypedArray()
                 val tAlignStart = System.nanoTime()
 
