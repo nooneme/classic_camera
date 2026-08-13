@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 开关轨道配色：开启=主题强调色，关闭=主题浅色 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:alpha="0.38"
+        android:color="?attr/surfaceLight"
+        android:state_enabled="false" android:state_checked="false" />
+    <item android:alpha="0.38"
+        android:color="?attr/accentColor"
+        android:state_enabled="false" android:state_checked="true" />
+    <item android:color="?attr/accentColor" android:state_checked="true" />
+    <item android:color="?attr/surfaceLight" />
+</selector>

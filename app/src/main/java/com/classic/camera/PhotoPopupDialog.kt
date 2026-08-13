@@ -35,6 +35,8 @@ class PhotoPopupDialog : DialogFragment() {
     private var photoUris = listOf<Uri>()
     private var currentIndex = 0
 
+    private var confirmDeleteArmed = false
+    private var btnDelete: MaterialButton? = null
     private val executor = Executors.newFixedThreadPool(3)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -70,7 +72,7 @@ class PhotoPopupDialog : DialogFragment() {
         val viewPager = view.findViewById<ViewPager2>(R.id.viewPager)
         val tvExif1 = view.findViewById<TextView>(R.id.tvExifLine1)
         val tvExif2 = view.findViewById<TextView>(R.id.tvExifLine2)
-        val btnDelete = view.findViewById<MaterialButton>(R.id.btnDelete)
+        btnDelete = view.findViewById<MaterialButton>(R.id.btnDelete)
         val btnCopy = view.findViewById<MaterialButton>(R.id.btnCopy)
 
         if (photoUris.isEmpty()) {
@@ -82,15 +84,48 @@ class PhotoPopupDialog : DialogFragment() {
         viewPager.setCurrentItem(currentIndex, false)
         updateExif(tvExif1, tvExif2, currentIndex)
 
-        btnDelete.setOnClickListener { deleteCurrentPhoto(viewPager, tvExif1, tvExif2) }
-        btnCopy.setOnClickListener { copyCurrentPhoto() }
+        btnDelete?.setOnClickListener {
+            if (confirmDeleteArmed) {
+                deleteCurrentPhoto(viewPager, tvExif1, tvExif2)
+            } else {
+                armDeleteConfirm()
+            }
+        }
+        btnCopy.setOnClickListener {
+            resetDeleteConfirm()
+            copyCurrentPhoto()
+        }
 
         viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
                 currentIndex = position
+                resetDeleteConfirm()
                 updateExif(tvExif1, tvExif2, position)
             }
         })
+    }
+
+    /** 第一次点击删除：文字变「确认？」并染成 errorColor，等待二次确认。 */
+    private fun armDeleteConfirm() {
+        confirmDeleteArmed = true
+        val btn = btnDelete ?: return
+        btn.text = "确认？"
+        btn.setTextColor(android.graphics.Color.WHITE)
+        btn.backgroundTintList = android.content.res.ColorStateList.valueOf(
+            requireContext().getAttrColor(R.attr.errorColor)
+        )
+    }
+
+    /** 恢复删除按钮初始状态。 */
+    private fun resetDeleteConfirm() {
+        if (!confirmDeleteArmed) return
+        confirmDeleteArmed = false
+        val btn = btnDelete ?: return
+        btn.text = "删除照片"
+        btn.setTextColor(requireContext().getAttrColor(R.attr.errorColor))
+        btn.backgroundTintList = android.content.res.ColorStateList.valueOf(
+            android.graphics.Color.TRANSPARENT
+        )
     }
 
     private fun updateExif(tv1: TextView, tv2: TextView, index: Int) {
@@ -235,6 +270,7 @@ class PhotoPopupDialog : DialogFragment() {
                 dismiss()
                 return
             }
+            resetDeleteConfirm()
             val newIdx = currentIndex.coerceAtMost(newList.size - 1)
             photoUris = newList
             currentIndex = newIdx

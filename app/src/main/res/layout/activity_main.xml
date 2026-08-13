@@ -237,10 +237,11 @@
             android:id="@+id/btnManageFilters"
             android:layout_width="@dimen/widget_size"
             android:layout_height="@dimen/widget_size"
-            android:src="@drawable/ic_settings_gear"
+            android:src="@drawable/ic_more_horiz"
             android:scaleType="center"
-            android:background="@drawable/btn_icon_md_bg"
+            android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="管理滤镜"
+            android:translationY="-4dp"
             android:layout_marginStart="@dimen/spacing_xs" />
     </LinearLayout>
 

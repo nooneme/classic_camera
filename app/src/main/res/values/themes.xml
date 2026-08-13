@@ -42,6 +42,16 @@
         <item name="dialogScrim">@color/dialog_scrim</item>
         <item name="iconPrimary">@color/icon_primary</item>
         <item name="iconDisabled">@color/icon_disabled</item>
+
+        <!-- 开关关闭态外圈描边：浅色主题用最深色，与浅色轨道形成对比 -->
+        <item name="switchOutlineColor">@color/surface_darkest</item>
+
+        <!-- Material3 补充属性：让开关(MaterialSwitch)关闭态跟随主题 -->
+        <item name="colorSurfaceContainerHighest">@color/surface_light</item>
+        <item name="colorSurfaceContainer">@color/surface_card</item>
+        <item name="colorSurfaceVariant">@color/surface_light</item>
+        <item name="colorOutline">@color/text_tertiary</item>
+        <item name="colorOutlineVariant">@color/divider</item>
     </style>
 
     <style name="Theme.古法相机" parent="Base.Theme.古法相机" />
@@ -128,6 +138,15 @@
         <item name="android:windowBackground">@color/berry_surface_darkest</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+
+        <!-- Material3 补充属性：让开关关闭态跟随主题 -->
+        <item name="colorSurfaceContainerHighest">@color/berry_surface_light</item>
+        <item name="colorSurfaceContainer">@color/berry_surface_card</item>
+        <item name="colorSurfaceVariant">@color/berry_surface_light</item>
+        <item name="colorOutline">@color/berry_text_tertiary</item>
+        <item name="colorOutlineVariant">@color/berry_divider</item>
+        <!-- 深色主题：关闭态描边用浅色，与深色轨道形成对比 -->
+        <item name="switchOutlineColor">@color/berry_surface_light</item>
     </style>
 
     <style name="Theme.古法相机.蜜桃薄荷" parent="Theme.古法相机">
@@ -212,6 +231,15 @@
         <item name="android:windowBackground">@color/sakura_surface_darkest</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+
+        <!-- Material3 补充属性：让开关关闭态跟随主题 -->
+        <item name="colorSurfaceContainerHighest">@color/sakura_surface_light</item>
+        <item name="colorSurfaceContainer">@color/sakura_surface_card</item>
+        <item name="colorSurfaceVariant">@color/sakura_surface_light</item>
+        <item name="colorOutline">@color/sakura_text_tertiary</item>
+        <item name="colorOutlineVariant">@color/sakura_divider</item>
+        <!-- 深色主题：关闭态描边用浅色，与深色轨道形成对比 -->
+        <item name="switchOutlineColor">@color/sakura_surface_light</item>
     </style>
 
     <style name="Theme.古法相机.浅樱" parent="Theme.古法相机">
@@ -341,6 +369,15 @@
         <item name="android:windowBackground">@color/wine_surface_darkest</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+
+        <!-- Material3 补充属性：让开关关闭态跟随主题 -->
+        <item name="colorSurfaceContainerHighest">@color/wine_surface_light</item>
+        <item name="colorSurfaceContainer">@color/wine_surface_card</item>
+        <item name="colorSurfaceVariant">@color/wine_surface_light</item>
+        <item name="colorOutline">@color/wine_text_tertiary</item>
+        <item name="colorOutlineVariant">@color/wine_divider</item>
+        <!-- 深色主题：关闭态描边用浅色，与深色轨道形成对比 -->
+        <item name="switchOutlineColor">@color/wine_surface_light</item>
     </style>
 
     <!-- Dialog / Overlay 主题 -->

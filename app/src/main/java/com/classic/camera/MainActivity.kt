@@ -1,7 +1,7 @@
 package com.classic.camera
 
 import android.Manifest
-import android.app.AlertDialog
+import androidx.appcompat.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -38,13 +38,13 @@ import android.view.WindowManager
 import com.google.android.material.button.MaterialButton
 import android.widget.ImageButton
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import com.google.android.material.slider.Slider
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.classic.camera.databinding.DialogSettingsBinding
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -104,10 +104,8 @@ class MainActivity : AppCompatActivity() {
     private val captureVibHandler = Handler(Looper.getMainLooper())
 
     /** 当前滤镜路径（空串=无滤镜） */
-    /** 设置弹窗引用（拖拽滑块时透明化用） */
+    /** 设置弹窗引用 */
     private var settingsDialog: AlertDialog? = null
-    private var settingsDialogOriginalBg: android.graphics.drawable.Drawable? = null
-    private val settingsLayoutChildren = mutableListOf<android.view.View>()
 
     private var colorTempKelvin = 6500
     private var colorTint = 0
@@ -539,423 +537,99 @@ class MainActivity : AppCompatActivity() {
     /** 显示设置弹窗。 */
     private fun showSettingsDialog() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val order = SettingsOrderStore.load(this)
+        val items = buildSettingsItems(prefs, order)
 
-        fun applyDng(enabled: Boolean) {
-            prefs.edit().putBoolean("save_dng", enabled).apply()
-            cameraController?.saveDng = enabled
-        }
+        val adapter = SettingsAdapter(items, object : SettingsAdapter.Listener {
+            override fun getSelectedTheme(): String =
+                prefs.getString("theme", "classic") ?: "classic"
 
-        fun applyMultiFrame(enabled: Boolean, count: Int) {
-            val n = if (enabled) count.coerceIn(2, 8) else 1
-            prefs.edit().putBoolean("multi_frame", enabled).apply()
-            prefs.edit().putInt("multi_frame_count", n).apply()
-            cameraController?.multiFrameCount = n
-        }
-
-        val saveDng = prefs.getBoolean("save_dng", false)
-        val multiFrame = prefs.getBoolean("multi_frame", false)
-        val multiFrameCount = prefs.getInt("multi_frame_count", 4)
-        val wlOffset = prefs.getInt("white_level_offset", 0)
-
-        val switchDng = Switch(this).apply {
-            isChecked = saveDng
-            text = "保存 DNG"
-            textSize = 16f
-            setPadding(48, 24, 48, 24)
-            setOnCheckedChangeListener { _, isChecked -> applyDng(isChecked) }
-        }
-
-        val switchMultiFrame = Switch(this).apply {
-            isChecked = multiFrame
-            text = "多帧降噪"
-            textSize = 16f
-            setPadding(48, 16, 48, 8)
-        }
-
-        val tvFrameCount = TextView(this).apply {
-            text = "合成帧数: $multiFrameCount"
-            textSize = 15f
-            setPadding(48, 8, 48, 4)
-            visibility = if (multiFrame) android.view.View.VISIBLE else android.view.View.GONE
-        }
-
-        val sbFrameCount = Slider(this).apply {
-            valueFrom = 0f
-            stepSize = 1f
-            setTickVisible(false)
-            setLabelBehavior(2)
-            valueTo = 6f
-            value = (multiFrameCount - 2).coerceIn(0, 6).toFloat()
-            setPadding(48, 0, 48, 16)
-            visibility = if (multiFrame) android.view.View.VISIBLE else android.view.View.GONE
-            addOnChangeListener { _, value, _ ->
-                tvFrameCount.text = "合成帧数: ${value.toInt() + 2}"
-            }
-            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) {}
-                override fun onStopTrackingTouch(slider: Slider) {
-                    applyMultiFrame(true, slider.value.toInt() + 2)
+            override fun onSwitchChanged(item: SettingsItem, checked: Boolean) {
+                when (item.id) {
+                    "save_dng" -> {
+                        prefs.edit().putBoolean("save_dng", checked).apply()
+                        cameraController?.saveDng = checked
+                    }
+                    "highlight_reconstruction" -> {
+                        prefs.edit().putBoolean("highlight_reconstruction", checked).apply()
+                        glSurfaceView.queueEvent { pipeline?.highlightReconstructionEnabled = checked }
+                    }
+                    "auto_contrast" -> {
+                        prefs.edit().putBoolean("auto_contrast", checked).apply()
+                        glSurfaceView.queueEvent { pipeline?.autoContrast = checked }
+                    }
+                    "multi_frame" -> {
+                        val n = if (checked) item.value.toInt().coerceIn(2, 8) else 1
+                        prefs.edit().putBoolean("multi_frame", checked).putInt("multi_frame_count", n).apply()
+                        cameraController?.multiFrameCount = n
+                    }
                 }
-            })
-        }
-
-        switchMultiFrame.setOnCheckedChangeListener { _, isChecked ->
-            val vis = if (isChecked) android.view.View.VISIBLE else android.view.View.GONE
-            sbFrameCount.visibility = vis
-            tvFrameCount.visibility = vis
-            if (isChecked) {
-                tvFrameCount.text = "合成帧数: ${sbFrameCount.value.toInt() + 2}"
-                applyMultiFrame(true, sbFrameCount.value.toInt() + 2)
-            } else {
-                applyMultiFrame(false, 0)
             }
-        }
 
-        // ---- 主题选择 ----
-        val currentTheme = prefs.getString("theme", "classic") ?: "classic"
-        val themes = listOf(
-            ThemeEntry("classic", "棉花糖", intArrayOf(
-                0xFFF8F4EC.toInt(), 0xFF90CAF9.toInt(), 0xFFE57373.toInt(), 0xFF2C2C2C.toInt()
-            )),
-            ThemeEntry("macaron", "马卡龙", intArrayOf(
-                0xFFA3CEC5.toInt(), 0xFFE2A3B4.toInt(), 0xFFA2BEE3.toInt(), 0xFF3D3A3A.toInt()
-            )),
-            ThemeEntry("berry", "脏脏莓咖", intArrayOf(
-                0xFF6D6975.toInt(), 0xFFE59A9B.toInt(), 0xFFB6828D.toInt(), 0xFFF0E8EC.toInt()
-            )),
-            ThemeEntry("mint", "蜜桃薄荷", intArrayOf(
-                0xFF96C7B3.toInt(), 0xFFF9B95C.toInt(), 0xFF6398A9.toInt(), 0xFFD7897F.toInt()
-            )),
-            ThemeEntry("sakura", "夜樱", intArrayOf(
-                0xFF2B1F21.toInt(), 0xFFD09DB8.toInt(), 0xFF553758.toInt(), 0xFFFCEFFA.toInt()
-            )),
-            ThemeEntry("blossom", "浅樱", intArrayOf(
-                0xFFFCEFFA.toInt(), 0xFFD09DB8.toInt(), 0xFFE8D3E0.toInt(), 0xFF423048.toInt()
-            )),
-            ThemeEntry("graphite", "石墨", intArrayOf(
-                0xFFF5F4F2.toInt(), 0xFF7F1D1A.toInt(), 0xFFD8D5D1.toInt(), 0xFF141616.toInt()
-            )),
-            ThemeEntry("wine", "醉莓", intArrayOf(
-                0xFF230E0F.toInt(), 0xFFBC788D.toInt(), 0xFF541625.toInt(), 0xFF9D4060.toInt()
-            )),
-        )
-        val tvThemeLabel = TextView(this).apply {
-            text = "主题"
-            textSize = 16f
-            setPadding(48, 24, 48, 8)
-        }
-        val themeRecyclerView = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@MainActivity, LinearLayoutManager.HORIZONTAL, false)
-            adapter = ThemeSelectorAdapter(themes, currentTheme) { entry ->
-                prefs.edit().putString("theme", entry.id).apply()
+            override fun onSliderLive(item: SettingsItem, value: Float) {
+                when (item.id) {
+                    "white_level_offset" ->
+                        glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = value }
+                    "tone_map_d" ->
+                        glSurfaceView.queueEvent { pipeline?.toneMapD = value }
+                    "exposure_comp" ->
+                        glSurfaceView.queueEvent { pipeline?.exposureComp = value }
+                    "hl_comp" ->
+                        glSurfaceView.queueEvent { pipeline?.hlComp = value }
+                    "hl_threshold" ->
+                        glSurfaceView.queueEvent { pipeline?.hlThreshold = value }
+                    "black_point" ->
+                        glSurfaceView.queueEvent { pipeline?.blackPoint = value }
+                    "shadow_comp" ->
+                        glSurfaceView.queueEvent { pipeline?.shadowComp = value }
+                    "contrast" ->
+                        glSurfaceView.queueEvent { pipeline?.contrast = value }
+                    "lut_intensity" ->
+                        glSurfaceView.queueEvent { pipeline?.lutIntensity = value }
+                    "color_temp" -> { colorTempKelvin = value.toInt(); updateColorTempGains() }
+                    "color_tint" -> { colorTint = value.toInt(); updateColorTempGains() }
+                }
+            }
+
+            override fun onSliderCommit(item: SettingsItem, value: Float) {
+                when (item.id) {
+                    "white_level_offset" ->
+                        prefs.edit().putInt("white_level_offset", value.toInt()).apply()
+                    "tone_map_d" ->
+                        prefs.edit().putFloat("tone_map_d", value).apply()
+                    "exposure_comp" ->
+                        prefs.edit().putFloat("exposure_comp", value).apply()
+                    "hl_comp" ->
+                        prefs.edit().putFloat("hl_comp", value).apply()
+                    "hl_threshold" ->
+                        prefs.edit().putFloat("hl_threshold", value).apply()
+                    "black_point" ->
+                        prefs.edit().putFloat("black_point", value).apply()
+                    "shadow_comp" ->
+                        prefs.edit().putFloat("shadow_comp", value).apply()
+                    "contrast" ->
+                        prefs.edit().putFloat("contrast", value).apply()
+                    "lut_intensity" ->
+                        prefs.edit().putFloat("lut_intensity", value).apply()
+                    "color_temp" -> {
+                        colorTempKelvin = value.toInt(); updateColorTempGains()
+                        prefs.edit().putInt("color_temp_kelvin", value.toInt()).apply()
+                    }
+                    "color_tint" -> {
+                        colorTint = value.toInt(); updateColorTempGains()
+                        prefs.edit().putInt("color_tint", value.toInt()).apply()
+                    }
+                    "multi_frame" ->
+                        prefs.edit().putInt("multi_frame_count", value.toInt()).apply()
+                }
+            }
+
+            override fun onThemeSelected(themeId: String) {
+                prefs.edit().putString("theme", themeId).apply()
                 recreate()
             }
-            isNestedScrollingEnabled = false
-        }
 
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(48, 16, 48, 16)
-        }
-        layout.addView(tvThemeLabel)
-        layout.addView(themeRecyclerView)
-        layout.addView(switchDng)
-        layout.addView(switchMultiFrame)
-        layout.addView(tvFrameCount)
-        layout.addView(sbFrameCount)
-
-        // ---- 高光重建 ----
-        val hrEnabled = prefs.getBoolean("highlight_reconstruction", false)
-        val switchHr = Switch(this).apply {
-            isChecked = hrEnabled
-            text = "高光重建"
-            textSize = 16f
-            setPadding(48, 16, 48, 24)
-            setOnCheckedChangeListener { _, isChecked ->
-                prefs.edit().putBoolean("highlight_reconstruction", isChecked).apply()
-                glSurfaceView.queueEvent { pipeline?.highlightReconstructionEnabled = isChecked }
-            }
-        }
-        layout.addView(switchHr)
-
-        // ---- 白电平补偿 ----
-        val tvWlOffset = TextView(this).apply {
-            text = "白电平补偿: ${wlOffset}"
-            textSize = 15f
-            setPadding(48, 8, 48, 4)
-        }
-        val sbWlOffset = Slider(this).apply {
-            valueFrom = 0f
-            stepSize = 1f
-            setTickVisible(false)
-            setLabelBehavior(2)
-            valueTo = 512f
-            value = (wlOffset + 256).coerceIn(0, 512).toFloat()
-            setPadding(48, 0, 48, 16)
-            addOnChangeListener { _, value, _ ->
-                val offset = value.toInt() - 256
-                tvWlOffset.text = "白电平补偿: ${if (offset >= 0) "+$offset" else "$offset"}"
-                glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = offset.toFloat() }
-            }
-            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) {
-                    val offset = slider.value.toInt() - 256
-                    glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = offset.toFloat() }
-                    showToneMapPreview(tvWlOffset, slider)
-                }
-                override fun onStopTrackingTouch(slider: Slider) {
-                    val offset = slider.value.toInt() - 256
-                    prefs.edit().putInt("white_level_offset", offset).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-
-        layout.addView(tvWlOffset)
-        layout.addView(sbWlOffset)
-
-        // ---- 色调映射 D（分母一次项系数） ----
-        val toneMapD = prefs.getFloat("tone_map_d", 0.59f)
-        val tvToneMapD = TextView(this).apply {
-            text = "色调 D（默认0.59）: ${"%.2f".format(toneMapD)}"
-            textSize = 15f
-            setPadding(48, 16, 48, 4)
-        }
-        val sbToneMapD = Slider(this).apply {
-            valueFrom = 0f
-            stepSize = 1f
-            setTickVisible(false)
-            setLabelBehavior(2)
-            valueTo = 300f
-            value = ((toneMapD + 1f) * 100).roundToInt().coerceIn(0, 300).toFloat()
-            setPadding(48, 0, 48, 16)
-            addOnChangeListener { _, value, _ ->
-                val v = (value.toInt() / 100f) - 1f
-                tvToneMapD.text = "色调 D（默认0.59）: ${"%.2f".format(v)}"
-                glSurfaceView.queueEvent { pipeline?.toneMapD = v }
-            }
-            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) {
-                    val v = (slider.value.toInt() / 100f) - 1f
-                    glSurfaceView.queueEvent { pipeline?.toneMapD = v }
-                    showToneMapPreview(tvToneMapD, slider)
-                }
-                override fun onStopTrackingTouch(slider: Slider) {
-                    val v = (slider.value.toInt() / 100f) - 1f
-                    prefs.edit().putFloat("tone_map_d", v).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-
-        layout.addView(tvToneMapD)
-        layout.addView(sbToneMapD)
-
-        // ---- 曝光补偿 EV（①）----
-        val evDefault = prefs.getFloat("exposure_comp", 0f)
-        val tvEv = TextView(this).apply {
-            text = "曝光补偿 EV: ${"%.2f".format(evDefault)}"
-            textSize = 15f
-            setPadding(48, 8, 48, 4)
-        }
-        val sbEv = Slider(this).apply {
-            valueFrom = 0f; stepSize = 1f; setTickVisible(false); setLabelBehavior(2)
-            valueTo = 80f
-            value = ((evDefault + 2f) * 20).roundToInt().coerceIn(0, 80).toFloat()
-            setPadding(48, 0, 48, 16)
-            addOnChangeListener { _, value, _ ->
-                val v = (value.toInt() / 20f) - 2f
-                tvEv.text = "曝光补偿 EV: ${"%.2f".format(v)}"
-                glSurfaceView.queueEvent { pipeline?.exposureComp = v }
-            }
-            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) {
-                    showToneMapPreview(tvEv, slider)
-                }
-                override fun onStopTrackingTouch(slider: Slider) {
-                    val v = (slider.value.toInt() / 20f) - 2f
-                    prefs.edit().putFloat("exposure_comp", v).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-        layout.addView(tvEv); layout.addView(sbEv)
-
-        // ---- 高光压缩量（①）----
-        val hlCompDefault = prefs.getFloat("hl_comp", 0f)
-        val tvHlComp = TextView(this).apply {
-            text = "高光压缩量: ${hlCompDefault.toInt()}"
-            textSize = 15f
-            setPadding(48, 8, 48, 4)
-        }
-        val sbHlComp = Slider(this).apply {
-            valueFrom = 0f; stepSize = 1f; setTickVisible(false); setLabelBehavior(2)
-            valueTo = 100f; value = hlCompDefault.coerceIn(0f, 100f)
-            setPadding(48, 0, 48, 16)
-            addOnChangeListener { _, value, _ ->
-                tvHlComp.text = "高光压缩量: ${value.toInt()}"
-                glSurfaceView.queueEvent { pipeline?.hlComp = value }
-            }
-            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) { showToneMapPreview(tvHlComp, slider) }
-                override fun onStopTrackingTouch(slider: Slider) {
-                    prefs.edit().putFloat("hl_comp", slider.value).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-        layout.addView(tvHlComp); layout.addView(sbHlComp)
-
-        // ---- 高光压缩阈值（①）----
-        val hlThDefault = prefs.getFloat("hl_threshold", 0f)
-        val tvHlTh = TextView(this).apply {
-            text = "高光压缩阈值: ${hlThDefault.toInt()}"
-            textSize = 15f
-            setPadding(48, 8, 48, 4)
-        }
-        val sbHlTh = Slider(this).apply {
-            valueFrom = 0f; stepSize = 1f; setTickVisible(false); setLabelBehavior(2)
-            valueTo = 100f; value = hlThDefault.coerceIn(0f, 100f)
-            setPadding(48, 0, 48, 16)
-            addOnChangeListener { _, value, _ ->
-                tvHlTh.text = "高光压缩阈值: ${value.toInt()}"
-                glSurfaceView.queueEvent { pipeline?.hlThreshold = value }
-            }
-            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) { showToneMapPreview(tvHlTh, slider) }
-                override fun onStopTrackingTouch(slider: Slider) {
-                    prefs.edit().putFloat("hl_threshold", slider.value).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-        layout.addView(tvHlTh); layout.addView(sbHlTh)
-
-        // ---- 黑点（②）----
-        val bpDefault = prefs.getFloat("black_point", 0f)
-        val tvBlack = TextView(this).apply {
-            text = "黑点: ${bpDefault.toInt()}"
-            textSize = 15f
-            setPadding(48, 8, 48, 4)
-        }
-        val sbBlack = Slider(this).apply {
-            valueFrom = 0f; stepSize = 1f; setTickVisible(false); setLabelBehavior(2)
-            valueTo = 200f; value = (bpDefault + 100f).coerceIn(0f, 200f)
-            setPadding(48, 0, 48, 16)
-            addOnChangeListener { _, value, _ ->
-                val v = value.toInt() - 100
-                tvBlack.text = "黑点: $v"
-                glSurfaceView.queueEvent { pipeline?.blackPoint = v.toFloat() }
-            }
-            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) { showToneMapPreview(tvBlack, slider) }
-                override fun onStopTrackingTouch(slider: Slider) {
-                    val v = slider.value.toInt() - 100
-                    prefs.edit().putFloat("black_point", v.toFloat()).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-        layout.addView(tvBlack); layout.addView(sbBlack)
-
-        // ---- 阴影压缩（②）----
-        val shCompDefault = prefs.getFloat("shadow_comp", 50f)
-        val tvShComp = TextView(this).apply {
-            text = "阴影压缩: ${shCompDefault.toInt()}"
-            textSize = 15f
-            setPadding(48, 8, 48, 4)
-        }
-        val sbShComp = Slider(this).apply {
-            valueFrom = 0f; stepSize = 1f; setTickVisible(false); setLabelBehavior(2)
-            valueTo = 100f; value = shCompDefault.coerceIn(0f, 100f)
-            setPadding(48, 0, 48, 16)
-            addOnChangeListener { _, value, _ ->
-                tvShComp.text = "阴影压缩: ${value.toInt()}"
-                glSurfaceView.queueEvent { pipeline?.shadowComp = value }
-            }
-            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) { showToneMapPreview(tvShComp, slider) }
-                override fun onStopTrackingTouch(slider: Slider) {
-                    prefs.edit().putFloat("shadow_comp", slider.value).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-        layout.addView(tvShComp); layout.addView(sbShComp)
-
-        // ---- 对比度（③）----
-        val contDefault = prefs.getFloat("contrast", 0f)
-        val tvContrast = TextView(this).apply {
-            text = "对比度: ${contDefault.toInt()}"
-            textSize = 15f
-            setPadding(48, 8, 48, 4)
-        }
-        val sbContrast = Slider(this).apply {
-            valueFrom = 0f; stepSize = 1f; setTickVisible(false); setLabelBehavior(2)
-            valueTo = 200f; value = (contDefault + 100f).coerceIn(0f, 200f)
-            setPadding(48, 0, 48, 16)
-            addOnChangeListener { _, value, _ ->
-                val v = value.toInt() - 100
-                tvContrast.text = "对比度: $v"
-                glSurfaceView.queueEvent { pipeline?.contrast = v.toFloat() }
-            }
-            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) { showToneMapPreview(tvContrast, slider) }
-                override fun onStopTrackingTouch(slider: Slider) {
-                    val v = slider.value.toInt() - 100
-                    prefs.edit().putFloat("contrast", v.toFloat()).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-        layout.addView(tvContrast); layout.addView(sbContrast)
-
-        // ---- 自适应对比度（③）----
-        val autoContDefault = prefs.getBoolean("auto_contrast", true)
-        val switchAutoContrast = Switch(this).apply {
-            isChecked = autoContDefault
-            text = "自适应对比度（按画面平均亮度）"
-            textSize = 16f
-            setPadding(48, 8, 48, 16)
-            setOnCheckedChangeListener { _, isChecked ->
-                prefs.edit().putBoolean("auto_contrast", isChecked).apply()
-                glSurfaceView.queueEvent { pipeline?.autoContrast = isChecked }
-            }
-        }
-        layout.addView(switchAutoContrast)
-
-        val scrollView = ScrollView(this)
-
-        // ---- 色调曲线编辑器（直接嵌入弹窗） ----
-        val curveH = (200 * resources.displayMetrics.density).toInt()
-        val curveView = CurveEditorView(this).apply {
-            val savedCurve = ToneCurve.load(prefs)
-            setCurve(savedCurve)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, curveH
-            ).apply { setMargins(24, 8, 24, 8) }
-            onDragStart = {
-                scrollView.requestDisallowInterceptTouchEvent(true)
-                settingsDialog?.window?.let { w ->
-                    w.setDimAmount(0f)
-                    w.decorView.background = null
-                }
-                for (i in 0 until layout.childCount) {
-                    val child = layout.getChildAt(i)
-                    child.alpha = if (child === this@apply) 1f else 0f
-                }
-                settingsDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.alpha = 0f
-            }
-            onDragEnd = {
-                scrollView.requestDisallowInterceptTouchEvent(false)
-                settingsDialog?.window?.let { w ->
-                    w.setDimAmount(0.6f)
-                    w.decorView.background = settingsDialogOriginalBg
-                }
-                for (i in 0 until layout.childCount) layout.getChildAt(i).alpha = 1f
-                settingsDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.alpha = 1f
-            }
-            onCurveChanged = { curve ->
+            override fun onCurveChanged(curve: ToneCurve) {
                 ToneCurve.save(prefs, curve)
                 val nativeArr = curve.toNativeArray()
                 glSurfaceView.queueEvent {
@@ -963,243 +637,197 @@ class MainActivity : AppCompatActivity() {
                     glSurfaceView.requestRender()
                 }
             }
-        }
+        })
 
-        // ---- LUT 应用强度 ----
-        val lutIntensity = prefs.getFloat("lut_intensity", 1f)
-        val tvLutIntensity = TextView(this).apply {
-            text = "滤镜强度: ${(lutIntensity * 100).toInt()}%"
-            textSize = 15f
-            setPadding(48, 16, 48, 4)
-        }
-        glSurfaceView.queueEvent { pipeline?.lutIntensity = lutIntensity }
-        val sbLutIntensity = Slider(this).apply {
-            valueFrom = 0f
-            stepSize = 1f
-            setTickVisible(false)
-            setLabelBehavior(2)
-            valueTo = 100f
-            value = (lutIntensity * 100).roundToInt().coerceIn(0, 100).toFloat()
-            setPadding(48, 0, 48, 16)
-            addOnChangeListener { _, value, _ ->
-                tvLutIntensity.text = "滤镜强度: ${value.toInt()}%"
-                glSurfaceView.queueEvent { pipeline?.lutIntensity = value.toInt() / 100f }
-            }
-            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) {
-                    glSurfaceView.queueEvent { pipeline?.lutIntensity = slider.value / 100f }
-                    showToneMapPreview(tvLutIntensity, slider)
-                }
-                override fun onStopTrackingTouch(slider: Slider) {
-                    val v = slider.value / 100f
-                    prefs.edit().putFloat("lut_intensity", v).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-        layout.addView(tvLutIntensity)
-        layout.addView(sbLutIntensity)
+        val binding = DialogSettingsBinding.inflate(layoutInflater)
+        binding.settingsRecycler.layoutManager = LinearLayoutManager(this)
+        binding.settingsRecycler.adapter = adapter
+        adapter.attach(binding.settingsRecycler)
 
-        // ---- 色温(Kelvin) ----
-        val tvColorTemp = TextView(this).apply {
-            text = "色温: ${colorTempKelvin}K"
-            textSize = 15f
-            setPadding(48, 16, 48, 4)
-        }
-        val sbColorTemp = Slider(this).apply {
-            valueFrom = 0f
-            stepSize = 1f
-            setTickVisible(false)
-            setLabelBehavior(2)
-            valueTo = 130f
-            value = ((colorTempKelvin - 2000) / 100).coerceIn(0, 130).toFloat()
-            setPadding(48, 0, 48, 16)
-            addOnChangeListener { _, value, _ ->
-                colorTempKelvin = 2000 + value.toInt() * 100
-                tvColorTemp.text = "色温: ${colorTempKelvin}K"
-                updateColorTempGains()
-            }
-            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) {
-                    colorTempKelvin = 2000 + slider.value.toInt() * 100
-                    updateColorTempGains()
-                    showToneMapPreview(tvColorTemp, slider)
-                }
-                override fun onStopTrackingTouch(slider: Slider) {
-                    colorTempKelvin = 2000 + slider.value.toInt() * 100
-                    updateColorTempGains()
-                    prefs.edit().putInt("color_temp_kelvin", colorTempKelvin).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-
-        // ---- 色调(Tint) ----
-        val tvColorTint = TextView(this).apply {
-            text = "色调: ${colorTint}"
-            textSize = 15f
-            setPadding(48, 8, 48, 4)
-        }
-        val sbColorTint = Slider(this).apply {
-            valueFrom = 0f
-            stepSize = 1f
-            setTickVisible(false)
-            setLabelBehavior(2)
-            valueTo = 200f
-            value = (colorTint + 100).coerceIn(0, 200).toFloat()
-            setPadding(48, 0, 48, 16)
-            addOnChangeListener { _, value, _ ->
-                colorTint = value.toInt() - 100
-                tvColorTint.text = "色调: ${if (colorTint >= 0) "+$colorTint" else "$colorTint"}"
-                updateColorTempGains()
-            }
-            addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
-                override fun onStartTrackingTouch(slider: Slider) {
-                    colorTint = slider.value.toInt() - 100
-                    updateColorTempGains()
-                    showToneMapPreview(tvColorTint, slider)
-                }
-                override fun onStopTrackingTouch(slider: Slider) {
-                    colorTint = slider.value.toInt() - 100
-                    updateColorTempGains()
-                    prefs.edit().putInt("color_tint", colorTint).apply()
-                    hideToneMapPreview()
-                }
-            })
-        }
-
-        layout.addView(tvColorTemp)
-        layout.addView(sbColorTemp)
-        layout.addView(tvColorTint)
-        layout.addView(sbColorTint)
-
-        val btnReset = MaterialButton(this).apply {
-            text = "恢复默认"
-            isAllCaps = false
-            setPadding(48, 24, 48, 24)
-            setTextColor(getAttrColor(R.attr.errorColor))
-            setBackgroundColor(0x22EF9A9A.toInt())
-            setOnClickListener {
-                switchDng.isChecked = false
-                applyDng(false)
-                switchMultiFrame.isChecked = false
-                sbFrameCount.visibility = android.view.View.GONE
-                tvFrameCount.visibility = android.view.View.GONE
-                applyMultiFrame(false, 0)
-                sbWlOffset.value = 256f
-                tvWlOffset.text = "白电平补偿: 0"
-                glSurfaceView.queueEvent { pipeline?.whiteLevelOffset = 0f }
-                prefs.edit().putInt("white_level_offset", 0).apply()
-                sbToneMapD.value = 159f
-                tvToneMapD.text = "色调 D（默认0.59）: 0.59"
-                glSurfaceView.queueEvent { pipeline?.toneMapD = 0.59f }
-                prefs.edit().putFloat("tone_map_d", 0.59f).apply()
-                // 重置线性域色调映射参数
-                sbEv.value = 40f
-                tvEv.text = "曝光补偿 EV: 0.00"
-                glSurfaceView.queueEvent { pipeline?.exposureComp = 0f }
-                prefs.edit().putFloat("exposure_comp", 0f).apply()
-                sbHlComp.value = 0f
-                tvHlComp.text = "高光压缩量: 0"
-                glSurfaceView.queueEvent { pipeline?.hlComp = 0f }
-                prefs.edit().putFloat("hl_comp", 0f).apply()
-                sbHlTh.value = 0f
-                tvHlTh.text = "高光压缩阈值: 0"
-                glSurfaceView.queueEvent { pipeline?.hlThreshold = 0f }
-                prefs.edit().putFloat("hl_threshold", 0f).apply()
-                sbBlack.value = 100f
-                tvBlack.text = "黑点: 0"
-                glSurfaceView.queueEvent { pipeline?.blackPoint = 0f }
-                prefs.edit().putFloat("black_point", 0f).apply()
-                sbShComp.value = 50f
-                tvShComp.text = "阴影压缩: 50"
-                glSurfaceView.queueEvent { pipeline?.shadowComp = 50f }
-                prefs.edit().putFloat("shadow_comp", 50f).apply()
-                sbContrast.value = 100f
-                tvContrast.text = "对比度: 0"
-                glSurfaceView.queueEvent { pipeline?.contrast = 0f }
-                prefs.edit().putFloat("contrast", 0f).apply()
-                switchAutoContrast.isChecked = true
-                prefs.edit().putBoolean("auto_contrast", true).apply()
-                glSurfaceView.queueEvent { pipeline?.autoContrast = true }
-                // 重置色调曲线为 y=x
-                curveView.resetCurve()
-                val defaultCurve = ToneCurve()
-                ToneCurve.save(prefs, defaultCurve)
-                val nativeArr = defaultCurve.toNativeArray()
-                glSurfaceView.queueEvent { pipeline?.setToneCurve(nativeArr) }
-                // 重置高光重建
-                switchHr.isChecked = false
-                prefs.edit().putBoolean("highlight_reconstruction", false).apply()
-                glSurfaceView.queueEvent { pipeline?.highlightReconstructionEnabled = false }
-                // 重置滤镜强度
-                sbLutIntensity.value = 100f
-                tvLutIntensity.text = "滤镜强度: 100%"
-                glSurfaceView.queueEvent { pipeline?.lutIntensity = 1f }
-                prefs.edit().putFloat("lut_intensity", 1f).apply()
-                // 重置色温/色调
-                sbColorTemp.value = 45f
-                colorTempKelvin = 6500
-                tvColorTemp.text = "色温: 6500K"
-                sbColorTint.value = 100f
-                colorTint = 0
-                tvColorTint.text = "色调: 0"
-                updateColorTempGains()
-                prefs.edit().putInt("color_temp_kelvin", 6500).apply()
-                prefs.edit().putInt("color_tint", 0).apply()
-            }
-        }
-        // ---- 自定义色调曲线编辑器（置于设置项最底部）----
-        layout.addView(curveView)
-
-        scrollView.addView(layout)
         settingsDialog = AlertDialog.Builder(this)
-            .setView(scrollView)
-            .setPositiveButton("完成", null)
+            .setView(binding.root)
             .show()
-        // 把「恢复默认」按钮插到「完成」按钮左边
-        val posButton = settingsDialog?.getButton(AlertDialog.BUTTON_POSITIVE)
-        val panel = posButton?.parent as? ViewGroup
-        val posIndex = panel?.indexOfChild(posButton)
-        if (panel != null && posIndex != null) panel.addView(btnReset, posIndex)
+
+        adapter.dialog = settingsDialog
         settingsDialog?.window?.setBackgroundDrawableResource(R.drawable.dialog_settings_bg)
+        adapter.dialogBg = settingsDialog?.window?.decorView?.background
         settingsDialog?.window?.setLayout(
             (resources.displayMetrics.widthPixels * 0.9).toInt(),
             (resources.displayMetrics.heightPixels * 0.85).toInt()
         )
-        settingsDialogOriginalBg = settingsDialog?.window?.decorView?.background
-        settingsLayoutChildren.clear()
-        for (i in 0 until layout.childCount) settingsLayoutChildren.add(layout.getChildAt(i))
+
+        // 底部按钮栏：统一 MD 风格，水平均分
+        binding.btnDone.setOnClickListener { settingsDialog?.dismiss() }
+        binding.btnSort.setOnClickListener {
+            adapter.sortMode = !adapter.sortMode
+            binding.btnSort.text = if (adapter.sortMode) "完成排序" else "排序"
+            if (!adapter.sortMode) {
+                SettingsOrderStore.save(this, items.map { it.id })
+            }
+        }
+        binding.btnReset.setOnClickListener { resetAllSettings(items, adapter, prefs) }
     }
 
-    /** 色调映射滑块拖拽时：弹窗全透明，只保留当前文字。 */
-    private var toneMapKeepLabel: android.widget.TextView? = null
-    private var toneMapLabelOriginalColor: Int = 0
-
-    private fun showToneMapPreview(keepLabel: android.widget.TextView, keepSlider: Slider) {
-        settingsDialog?.window?.let { w ->
-            w.setDimAmount(0f)
-            w.decorView.background = null
+    /** 组装设置项列表：按保存顺序展示，并载入当前 prefs 值。 */
+    private fun buildSettingsItems(prefs: SharedPreferences, order: List<String>): MutableList<SettingsItem> {
+        val all = mutableListOf<SettingsItem>().apply {
+            // 主题
+            add(SettingsItem("theme", SettingsViewType.THEME, "主题"))
+            // 开关
+            add(SettingsItem("save_dng", SettingsViewType.SWITCH, "保存 DNG",
+                prefsKey = "save_dng", switchDefault = false,
+                boolValue = prefs.getBoolean("save_dng", false)))
+            add(SettingsItem("multi_frame", SettingsViewType.MULTIFRAME, "多帧降噪",
+                boolValue = prefs.getBoolean("multi_frame", false),
+                value = prefs.getInt("multi_frame_count", 4).toFloat()))
+            add(SettingsItem("highlight_reconstruction", SettingsViewType.SWITCH, "高光重建",
+                prefsKey = "highlight_reconstruction", switchDefault = false,
+                boolValue = prefs.getBoolean("highlight_reconstruction", false)))
+            // 滑块
+            add(SettingsItem("white_level_offset", SettingsViewType.SLIDER, "白电平补偿",
+                sliderMin = 0f, sliderMax = 512f, sliderStep = 1f,
+                valueToSlider = { it + 256f }, sliderToValue = { it - 256f },
+                formatValue = { v -> val o = v.toInt(); if (o >= 0) "+$o" else "$o" },
+                value = prefs.getInt("white_level_offset", 0).toFloat()))
+            add(SettingsItem("tone_map_d", SettingsViewType.SLIDER, "色调 D",
+                sliderMin = 0f, sliderMax = 300f, sliderStep = 1f,
+                valueToSlider = { (it + 1f) * 100f }, sliderToValue = { it / 100f - 1f },
+                formatValue = { "%.2f".format(it) },
+                value = prefs.getFloat("tone_map_d", 0.59f)))
+            add(SettingsItem("exposure_comp", SettingsViewType.SLIDER, "曝光补偿 EV",
+                sliderMin = 0f, sliderMax = 80f, sliderStep = 1f,
+                valueToSlider = { (it + 2f) * 20f }, sliderToValue = { it / 20f - 2f },
+                formatValue = { "%.2f".format(it) },
+                value = prefs.getFloat("exposure_comp", 0f)))
+            add(SettingsItem("hl_comp", SettingsViewType.SLIDER, "高光压缩量",
+                sliderMax = 100f, sliderStep = 1f,
+                formatValue = { it.toInt().toString() },
+                value = prefs.getFloat("hl_comp", 0f)))
+            add(SettingsItem("hl_threshold", SettingsViewType.SLIDER, "高光压缩阈值",
+                sliderMax = 100f, sliderStep = 1f,
+                formatValue = { it.toInt().toString() },
+                value = prefs.getFloat("hl_threshold", 0f)))
+            add(SettingsItem("black_point", SettingsViewType.SLIDER, "黑点",
+                sliderMax = 200f, sliderStep = 1f,
+                valueToSlider = { it + 100f }, sliderToValue = { it - 100f },
+                formatValue = { it.toInt().toString() },
+                value = prefs.getFloat("black_point", 0f)))
+            add(SettingsItem("shadow_comp", SettingsViewType.SLIDER, "阴影压缩",
+                sliderMax = 100f, sliderStep = 1f,
+                formatValue = { it.toInt().toString() },
+                value = prefs.getFloat("shadow_comp", 50f)))
+            add(SettingsItem("contrast", SettingsViewType.SLIDER, "对比度",
+                sliderMax = 200f, sliderStep = 1f,
+                valueToSlider = { it + 100f }, sliderToValue = { it - 100f },
+                formatValue = { it.toInt().toString() },
+                value = prefs.getFloat("contrast", 0f)))
+            // 自适应对比度开关
+            add(SettingsItem("auto_contrast", SettingsViewType.SWITCH, "自适应对比度",
+                prefsKey = "auto_contrast", switchDefault = true,
+                boolValue = prefs.getBoolean("auto_contrast", true)))
+            // 色调曲线
+            add(SettingsItem("curve", SettingsViewType.CURVE, "色调曲线",
+                curve = ToneCurve.load(prefs)))
+            // 滤镜强度
+            add(SettingsItem("lut_intensity", SettingsViewType.SLIDER, "滤镜强度",
+                sliderMax = 100f, sliderStep = 1f,
+                valueToSlider = { it * 100f }, sliderToValue = { it / 100f },
+                formatValue = { "${(it * 100f).roundToInt()}%" },
+                value = prefs.getFloat("lut_intensity", 1f)))
+            // 色温 / 色调
+            add(SettingsItem("color_temp", SettingsViewType.SLIDER, "色温",
+                sliderMax = 130f, sliderStep = 1f,
+                valueToSlider = { (it - 2000f) / 100f }, sliderToValue = { it * 100f + 2000f },
+                formatValue = { "${it.toInt()}K" },
+                value = prefs.getInt("color_temp_kelvin", 6500).toFloat()))
+            add(SettingsItem("color_tint", SettingsViewType.SLIDER, "色调",
+                sliderMax = 200f, sliderStep = 1f,
+                valueToSlider = { it + 100f }, sliderToValue = { it - 100f },
+                formatValue = { v -> val o = v.toInt(); if (o >= 0) "+$o" else "$o" },
+                value = prefs.getInt("color_tint", 0).toFloat()))
         }
-        toneMapKeepLabel = keepLabel
-        toneMapLabelOriginalColor = keepLabel.currentTextColor
-        keepLabel.setTextColor(getAttrColor(R.attr.textPrimary))
-        for (child in settingsLayoutChildren) {
-            child.alpha = if (child === keepLabel || child === keepSlider) 1f else 0f
-        }
-        settingsDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.alpha = 0f
+        val byId = all.associateBy { it.id }
+        // 按保存顺序重排，缺省项追加到末尾
+        val result = mutableListOf<SettingsItem>()
+        for (id in order) byId[id]?.let { result.add(it) }
+        for (item in all) if (result.none { it.id == item.id }) result.add(item)
+        return result
     }
 
-    /** 松手后恢复弹窗显示。 */
-    private fun hideToneMapPreview() {
-        settingsDialog?.window?.let { w ->
-            w.setDimAmount(0.6f)
-            w.decorView.background = settingsDialogOriginalBg
+    /** 把所有设置恢复为出厂默认，就地刷新弹窗（不重开）。 */
+    private fun resetAllSettings(
+        items: MutableList<SettingsItem>,
+        adapter: SettingsAdapter,
+        prefs: SharedPreferences
+    ) {
+        // 更新 item 运行时值
+        val defaults = mapOf(
+            "save_dng" to SettingsItem("save_dng", SettingsViewType.SWITCH, "", boolValue = false),
+            "multi_frame" to SettingsItem("multi_frame", SettingsViewType.MULTIFRAME, "", boolValue = false, value = 4f),
+            "highlight_reconstruction" to SettingsItem("highlight_reconstruction", SettingsViewType.SWITCH, "", boolValue = false),
+            "white_level_offset" to SettingsItem("white_level_offset", SettingsViewType.SLIDER, "", value = 0f),
+            "tone_map_d" to SettingsItem("tone_map_d", SettingsViewType.SLIDER, "", value = 0.59f),
+            "exposure_comp" to SettingsItem("exposure_comp", SettingsViewType.SLIDER, "", value = 0f),
+            "hl_comp" to SettingsItem("hl_comp", SettingsViewType.SLIDER, "", value = 0f),
+            "hl_threshold" to SettingsItem("hl_threshold", SettingsViewType.SLIDER, "", value = 0f),
+            "black_point" to SettingsItem("black_point", SettingsViewType.SLIDER, "", value = 0f),
+            "shadow_comp" to SettingsItem("shadow_comp", SettingsViewType.SLIDER, "", value = 50f),
+            "contrast" to SettingsItem("contrast", SettingsViewType.SLIDER, "", value = 0f),
+            "auto_contrast" to SettingsItem("auto_contrast", SettingsViewType.SWITCH, "", boolValue = true),
+            "lut_intensity" to SettingsItem("lut_intensity", SettingsViewType.SLIDER, "", value = 1f),
+            "color_temp" to SettingsItem("color_temp", SettingsViewType.SLIDER, "", value = 6500f),
+            "color_tint" to SettingsItem("color_tint", SettingsViewType.SLIDER, "", value = 0f),
+        )
+        for (item in items) {
+            defaults[item.id]?.let { d ->
+                item.boolValue = d.boolValue
+                item.value = d.value
+            }
+            if (item.type == SettingsViewType.CURVE) item.curve = ToneCurve()
         }
-        for (child in settingsLayoutChildren) child.alpha = 1f
-        settingsDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.alpha = 1f
-        toneMapKeepLabel?.setTextColor(toneMapLabelOriginalColor)
-        toneMapKeepLabel = null
+
+        // 写回 prefs
+        prefs.edit().putBoolean("save_dng", false)
+            .putBoolean("multi_frame", false)
+            .putInt("multi_frame_count", 4)
+            .putBoolean("highlight_reconstruction", false)
+            .putBoolean("auto_contrast", true)
+            .putInt("white_level_offset", 0)
+            .putFloat("tone_map_d", 0.59f)
+            .putFloat("exposure_comp", 0f)
+            .putFloat("hl_comp", 0f)
+            .putFloat("hl_threshold", 0f)
+            .putFloat("black_point", 0f)
+            .putFloat("shadow_comp", 50f)
+            .putFloat("contrast", 0f)
+            .putFloat("lut_intensity", 1f)
+            .putInt("color_temp_kelvin", 6500)
+            .putInt("color_tint", 0)
+            .apply()
+        ToneCurve.save(prefs, ToneCurve())
+
+        cameraController?.saveDng = false
+        cameraController?.multiFrameCount = 1
+        colorTempKelvin = 6500
+        colorTint = 0
+        updateColorTempGains()
+
+        glSurfaceView.queueEvent {
+            pipeline?.whiteLevelOffset = 0f
+            pipeline?.toneMapD = 0.59f
+            pipeline?.exposureComp = 0f
+            pipeline?.hlComp = 0f
+            pipeline?.hlThreshold = 0f
+            pipeline?.blackPoint = 0f
+            pipeline?.shadowComp = 50f
+            pipeline?.contrast = 0f
+            pipeline?.autoContrast = true
+            pipeline?.lutIntensity = 1f
+            pipeline?.highlightReconstructionEnabled = false
+            pipeline?.setToneCurve(ToneCurve().toNativeArray())
+            glSurfaceView.requestRender()
+        }
+        adapter.notifyDataSetChanged()
     }
 
     // ================= LUT 列表加载 =================

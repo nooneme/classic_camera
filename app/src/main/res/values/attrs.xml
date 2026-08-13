@@ -25,4 +25,5 @@
     <attr name="dialogScrim" format="color" />
     <attr name="iconPrimary" format="color" />
     <attr name="iconDisabled" format="color" />
+    <attr name="switchOutlineColor" format="color" />
 </resources>

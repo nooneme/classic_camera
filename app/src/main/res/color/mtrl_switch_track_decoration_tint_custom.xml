@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 开关轨道外圈描边：关闭态随主题(浅色主题=surfaceDarkest，深色主题=surfaceLight)，开启态透明 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@android:color/transparent" android:state_checked="true" />
+    <item android:color="?attr/switchOutlineColor" />
+</selector>
