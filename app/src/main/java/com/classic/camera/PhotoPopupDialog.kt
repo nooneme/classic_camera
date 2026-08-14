@@ -35,9 +35,12 @@ class PhotoPopupDialog : DialogFragment() {
     private var photoUris = listOf<Uri>()
     private var currentIndex = 0
 
+    private var exifRequestId = 0
+
     private var confirmDeleteArmed = false
     private var btnDelete: MaterialButton? = null
     private var deleteDefaultTextColor = 0
+    private var deleteDefaultBackgroundTint: android.content.res.ColorStateList? = null
     private val executor = Executors.newFixedThreadPool(3)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -112,6 +115,9 @@ class PhotoPopupDialog : DialogFragment() {
         if (deleteDefaultTextColor == 0) {
             deleteDefaultTextColor = btn.currentTextColor
         }
+        if (deleteDefaultBackgroundTint == null) {
+            deleteDefaultBackgroundTint = btn.backgroundTintList
+        }
         confirmDeleteArmed = true
         btn.text = "确认？"
         btn.setTextColor(android.graphics.Color.WHITE)
@@ -127,16 +133,18 @@ class PhotoPopupDialog : DialogFragment() {
         val btn = btnDelete ?: return
         btn.text = "删除照片"
         if (deleteDefaultTextColor != 0) btn.setTextColor(deleteDefaultTextColor)
-        btn.backgroundTintList = null
+        btn.backgroundTintList = deleteDefaultBackgroundTint
     }
 
     private fun updateExif(tv1: TextView, tv2: TextView, index: Int) {
         val uri = photoUris.getOrNull(index) ?: return
+        val requestId = ++exifRequestId
         tv1.text = ""
         tv2.text = "加载中..."
         executor.execute {
             val info = readExif(uri)
             activity?.runOnUiThread {
+                if (requestId != exifRequestId) return@runOnUiThread
                 tv1.text = info.first
                 tv2.text = info.second
             }
@@ -276,6 +284,8 @@ class PhotoPopupDialog : DialogFragment() {
             val newIdx = currentIndex.coerceAtMost(newList.size - 1)
             photoUris = newList
             currentIndex = newIdx
+            arguments?.putStringArrayList(ARG_URIS, ArrayList(newList.map { it.toString() }))
+            arguments?.putInt(ARG_INDEX, newIdx)
             viewPager.adapter = PhotoAdapter(newList)
             viewPager.setCurrentItem(newIdx, false)
             updateExif(tv1, tv2, newIdx)
