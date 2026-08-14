@@ -37,6 +37,7 @@ class PhotoPopupDialog : DialogFragment() {
 
     private var confirmDeleteArmed = false
     private var btnDelete: MaterialButton? = null
+    private var deleteDefaultTextColor = 0
     private val executor = Executors.newFixedThreadPool(3)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -107,8 +108,11 @@ class PhotoPopupDialog : DialogFragment() {
 
     /** 第一次点击删除：文字变「确认？」并染成 errorColor，等待二次确认。 */
     private fun armDeleteConfirm() {
-        confirmDeleteArmed = true
         val btn = btnDelete ?: return
+        if (deleteDefaultTextColor == 0) {
+            deleteDefaultTextColor = btn.currentTextColor
+        }
+        confirmDeleteArmed = true
         btn.text = "确认？"
         btn.setTextColor(android.graphics.Color.WHITE)
         btn.backgroundTintList = android.content.res.ColorStateList.valueOf(
@@ -116,16 +120,14 @@ class PhotoPopupDialog : DialogFragment() {
         )
     }
 
-    /** 恢复删除按钮初始状态。 */
+    /** 恢复删除按钮初始状态（与复制按钮相同的普通填充样式）。 */
     private fun resetDeleteConfirm() {
         if (!confirmDeleteArmed) return
         confirmDeleteArmed = false
         val btn = btnDelete ?: return
         btn.text = "删除照片"
-        btn.setTextColor(requireContext().getAttrColor(R.attr.errorColor))
-        btn.backgroundTintList = android.content.res.ColorStateList.valueOf(
-            android.graphics.Color.TRANSPARENT
-        )
+        if (deleteDefaultTextColor != 0) btn.setTextColor(deleteDefaultTextColor)
+        btn.backgroundTintList = null
     }
 
     private fun updateExif(tv1: TextView, tv2: TextView, index: Int) {

@@ -1,9 +1,13 @@
 package com.classic.camera
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.graphics.drawable.Drawable
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import androidx.appcompat.app.AlertDialog
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -163,12 +167,13 @@ class SettingsAdapter(
 
             switch.setOnCheckedChangeListener(null)
             switch.isChecked = item.valueAsBoolean
+            // 初始状态直接设置，不播放动画（避免列表刷新时闪烁）
+            row.visibility = if (item.valueAsBoolean) View.VISIBLE else View.GONE
             switch.setOnCheckedChangeListener { _, checked ->
                 item.boolValue = checked
-                row.visibility = if (checked) View.VISIBLE else View.GONE
+                if (checked) expandFrameRow(row) else collapseFrameRow(row)
                 listener.onSwitchChanged(item, checked)
             }
-            row.visibility = if (item.valueAsBoolean) View.VISIBLE else View.GONE
 
             // 先移除旧监听器，避免复用绑定设置 value 时触发旧监听器
             touchListener?.let { slider.removeOnSliderTouchListener(it) }
@@ -201,6 +206,65 @@ class SettingsAdapter(
             }
             slider.addOnSliderTouchListener(touchListener!!)
             slider.addOnChangeListener(changeListener!!)
+        }
+
+        /** 展开 frameCountRow：高度 0 → 完整高度，淡入。 */
+        private fun expandFrameRow(row: View) {
+            row.measure(
+                View.MeasureSpec.makeMeasureSpec((row.parent as? View)?.width ?: 0, View.MeasureSpec.AT_MOST),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            )
+            val targetHeight = row.measuredHeight
+            if (targetHeight <= 0) {
+                row.visibility = View.VISIBLE
+                row.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                return
+            }
+            row.visibility = View.VISIBLE
+            row.layoutParams.height = 0
+            row.alpha = 0f
+            val anim = ValueAnimator.ofInt(0, targetHeight)
+            anim.duration = 220L
+            anim.interpolator = DecelerateInterpolator()
+            anim.addUpdateListener { va ->
+                row.layoutParams.height = va.animatedValue as Int
+                row.alpha = (va.animatedValue as Int).toFloat() / targetHeight
+                row.requestLayout()
+            }
+            anim.addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    row.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                    row.alpha = 1f
+                    row.requestLayout()
+                }
+            })
+            anim.start()
+        }
+
+        /** 收起 frameCountRow：完整高度 → 0，淡出后隐藏。 */
+        private fun collapseFrameRow(row: View) {
+            val startHeight = row.height
+            if (startHeight <= 0) {
+                row.visibility = View.GONE
+                return
+            }
+            val anim = ValueAnimator.ofInt(startHeight, 0)
+            anim.duration = 180L
+            anim.interpolator = DecelerateInterpolator()
+            anim.addUpdateListener { va ->
+                row.layoutParams.height = va.animatedValue as Int
+                row.alpha = (va.animatedValue as Int).toFloat() / startHeight
+                row.requestLayout()
+            }
+            anim.addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    row.visibility = View.GONE
+                    row.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                    row.alpha = 1f
+                    row.requestLayout()
+                }
+            })
+            anim.start()
         }
     }
 
