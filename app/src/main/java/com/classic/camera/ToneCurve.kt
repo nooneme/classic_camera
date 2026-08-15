@@ -12,10 +12,15 @@ class ToneCurve {
         points.add(ControlPoint(1f, 1f))
     }
 
-    fun addPoint(x: Float, y: Float) {
+    /** 按 x 升序插入控制点，并返回该点在列表中的索引。 */
+    fun addPoint(x: Float, y: Float): Int {
         val idx = points.indexOfFirst { it.x >= x }
-        if (idx == -1) points.add(ControlPoint(x, y))
-        else points.add(idx, ControlPoint(x, y))
+        if (idx == -1) {
+            points.add(ControlPoint(x, y))
+            return points.size - 1
+        }
+        points.add(idx, ControlPoint(x, y))
+        return idx
     }
 
     fun removePoint(index: Int) {

@@ -60,7 +60,7 @@ class CurveEditorView @JvmOverloads constructor(
     }
 
     private var dragIndex = -1
-    private val hitRadius = 48f
+    private val hitRadius = 32f
 
     private val pad = 0f
     var previewMode = false
@@ -187,16 +187,33 @@ class CurveEditorView @JvmOverloads constructor(
                 val existing = curve.points.indexOfFirst {
                     hypot(it.x - tx, it.y - ty) < normHit
                 }
-                if (existing >= 0 && existing > 0 && existing < curve.points.size - 1) {
-                    dragIndex = existing
-                } else {
-                    curve.addPoint(tx.coerceIn(0f, 1f), ty.coerceIn(0f, 1f))
-                    dragIndex = curve.points.indexOfFirst { it.x >= tx }
-                    if (dragIndex == -1) dragIndex = curve.points.size - 1
-                    if (dragIndex == 0) dragIndex = 1
+                when {
+                    // 命中端点（固定不可拖）：直接忽略，避免生成抓不到的幽灵点
+                    existing == 0 || existing == curve.points.size - 1 -> {
+                        dragIndex = -1
+                    }
+                    // 命中内部控制点：进入拖拽
+                    existing > 0 -> {
+                        dragIndex = existing
+                        previewMode = true
+                        onDragStart?.invoke()
+                    }
+                    // 空白处：新增一个控制点并立即进入拖拽
+                    else -> {
+                        val nx = tx.coerceIn(0f, 1f)
+                        val ny = ty.coerceIn(0f, 1f)
+                        // 落在端点 x 上会变成索引 0 的不可拖幽灵点，忽略
+                        if (nx <= 0f || nx >= 1f) {
+                            dragIndex = -1
+                        } else {
+                            dragIndex = curve.addPoint(nx, ny)
+                            previewMode = true
+                            onDragStart?.invoke()
+                        }
+                    }
                 }
-                previewMode = true
-                onDragStart?.invoke()
+                // 进入拖拽时禁止父 RecyclerView 拦截，否则纵向拖动会被抢走变成滚动
+                parent?.requestDisallowInterceptTouchEvent(dragIndex >= 0)
                 rebuildLUT()
                 invalidate()
                 onCurveChanged?.invoke(curve)
@@ -218,6 +235,7 @@ class CurveEditorView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP -> {
                 if (dragIndex >= 0) {
+                    parent?.requestDisallowInterceptTouchEvent(false)
                     previewMode = false
                     onDragEnd?.invoke()
                     dragIndex = -1
@@ -226,6 +244,7 @@ class CurveEditorView @JvmOverloads constructor(
                 }
             }
             MotionEvent.ACTION_CANCEL -> {
+                parent?.requestDisallowInterceptTouchEvent(false)
                 previewMode = false
                 onDragEnd?.invoke()
                 dragIndex = -1
