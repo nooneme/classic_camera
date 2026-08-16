@@ -235,12 +235,14 @@ class MainActivity : AppCompatActivity() {
         // 恢复上次选择的滤镜
         currentFilterPath = prefs.getString("current_filter_path", "") ?: ""
         if (currentFilterPath.isNotEmpty()) {
-            val savedLut = LutUtils.loadCubeFile(java.io.File(currentFilterPath))
+            val savedFile = java.io.File(currentFilterPath)
+            val savedLut = if (savedFile.exists()) LutUtils.loadCubeFile(savedFile) else null
             if (savedLut != null) {
                 pipeline?.lutFloatArray = savedLut
                 pipeline?.lutSize = savedLut.let { LutUtils.lutSizeOf(it).takeIf { s -> s > 0 } } ?: LutUtils.LUT_SIZE
             } else {
                 currentFilterPath = ""
+                prefs.edit().remove("current_filter_path").apply()
             }
         }
         tvStatusFilter?.text = if (currentFilterPath.isNotEmpty())

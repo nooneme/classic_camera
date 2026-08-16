@@ -83,6 +83,8 @@ class SettingsAdapter(
                 }
 
                 override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {}
+
+                override fun isLongPressDragEnabled() = sortMode
             }
         )
     }

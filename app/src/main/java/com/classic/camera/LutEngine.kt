@@ -17,56 +17,18 @@ object LutEngine {
     }
 
     /**
-     * 从原图和滤镜图的像素数组生成 33×33×33 3D LUT。
-     *
-     * @param origPixels      原图 ARGB 像素数组
-     * @param filtPixels      滤镜图 ARGB 像素数组
-     * @param numPixels       像素数量
-     * @param outLutArray     预分配的 FloatArray(33*33*33*3)，接收 LUT 数据
-     * @param outCoveredArray 预分配的 BooleanArray(33*33*33)，接收每个体素是否被覆盖
-     * @return 色彩覆盖率 (0.0 ~ 1.0)
-     */
-    external fun generateLutAndCheckCoverage(
-        origPixels: IntArray,
-        filtPixels: IntArray,
-        numPixels: Int,
-        outLutArray: FloatArray,
-        outCoveredArray: BooleanArray
-    ): Float
-
-    /**
-     * 融合模式：标准拟合覆盖的体素用标准结果，空洞用多项式结果补齐。
-     *
-     * @param origPixels      原图 ARGB 像素数组
-     * @param filtPixels      滤镜图 ARGB 像素数组
-     * @param numPixels       像素数量
-     * @param outLutArray     预分配的 FloatArray(33*33*33*3)，接收 LUT 数据
-     * @param outCoveredArray 预分配的 BooleanArray(33*33*33)，接收每个体素是否被覆盖
-     * @param outStats        预分配的 FloatArray(8)，接收 [训练平均, 验证平均, 训练最大, 验证最大, 最差输入R, G, B, 覆盖率]
-     * @return 色彩覆盖率 (0.0 ~ 1.0)
-     */
-    external fun generateMergedLut(
-        origPixels: IntArray,
-        filtPixels: IntArray,
-        numPixels: Int,
-        outLutArray: FloatArray,
-        outCoveredArray: BooleanArray,
-        outStats: FloatArray
-    ): Float
-
-    /**
-     * 三次多项式回归拟合 33×33×33 3D LUT。
-     * 将颜色映射建模为 20 项三次多项式偏移场，比逐体素采样需要更少的样本，
-     * 且能自然外推到所有颜色空间。
+     * 移动最小二乘（MLS）拟合 33×33×33 3D LUT。
+     * 样本映射到已覆盖体素，空洞通过多轮迭代逐层填充：
+     * 每轮用已填充体素做数据，对该层空洞做距离加权的局部二次多项式拟合。
      *
      * @param origPixels  原图 ARGB 像素数组
      * @param filtPixels  滤镜图 ARGB 像素数组
      * @param numPixels   像素数量
      * @param outLutArray 预分配的 FloatArray(33*33*33*3)，接收 LUT 数据
-     * @param outStats    预分配的 FloatArray(7)，接收 [训练平均, 验证平均, 训练最大, 验证最大, 最差输入R, G, B]
-     * @return 验证集最大误差 (0~1)
+     * @param outStats    预分配的 FloatArray(9)，接收 [平均误差, 平均误差, 最大误差, 最大误差, 最差输入R, G, B, 二次拟合数, 线性拟合数]
+     * @return 最大误差 (0~1)
      */
-    external fun fitPolynomialLut(
+    external fun fitMlsLut(
         origPixels: IntArray,
         filtPixels: IntArray,
         numPixels: Int,

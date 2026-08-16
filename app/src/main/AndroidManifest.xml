@@ -47,10 +47,6 @@
             android:name=".GalleryActivity"
             android:exported="false" />
         <activity
-            android:name=".CoverageVisualizerActivity"
-            android:exported="false"
-            android:theme="@style/Theme.CoverageDialog" />
-        <activity
             android:name=".VectorFieldActivity"
             android:exported="false"
             android:theme="@style/Theme.CoverageDialog" />

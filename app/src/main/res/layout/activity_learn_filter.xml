@@ -127,33 +127,6 @@
             android:visibility="gone" />
     </FrameLayout>
 
-    <!-- 拟合方式下拉 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingHorizontal="@dimen/spacing_xxl"
-        android:paddingTop="@dimen/spacing_lg"
-        android:paddingBottom="@dimen/spacing_xs">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="拟合方式"
-        android:textColor="?attr/textSecondary"
-        android:textSize="@dimen/text_body_xl" />
-
-    <Spinner
-        android:id="@+id/spFitMethod"
-        android:layout_width="0dp"
-        android:layout_height="40dp"
-        android:layout_weight="1"
-        android:layout_marginStart="@dimen/spacing_lg"
-            android:backgroundTint="?attr/accentColor"
-            android:popupBackground="?attr/surfaceLight" />
-    </LinearLayout>
-
     <!-- 说明文字 -->
     <TextView
         android:layout_width="match_parent"
@@ -202,7 +175,7 @@
             android:layout_weight="1"
             android:text="添加图片"
             android:enabled="false"
-            style="@style/Widget.ClassicCamera.Button.Secondary"
+            style="@style/Widget.ClassicCamera.Button"
             android:paddingHorizontal="@dimen/spacing_md" />
 
         <Space
@@ -216,7 +189,7 @@
             android:layout_weight="1"
             android:text="开始学习"
             android:enabled="false"
-            style="@style/Widget.ClassicCamera.Button.Secondary"
+            style="@style/Widget.ClassicCamera.Button"
             android:paddingHorizontal="@dimen/spacing_md" />
 
         <Space
@@ -230,7 +203,7 @@
             android:layout_weight="1"
             android:text="完成"
             android:enabled="false"
-            style="@style/Widget.ClassicCamera.Button.Secondary"
+            style="@style/Widget.ClassicCamera.Button"
             android:paddingHorizontal="@dimen/spacing_md" />
     </LinearLayout>
 
