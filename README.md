@@ -26,29 +26,42 @@
 
 曝光、白平衡、色温、色调曲线、胶片模拟……每一项调节都**直接作用在 RAW 像素上**，并在预览框中实时呈现。拍摄现场即可完成创作调整，摆脱「拍完再进后期」的繁琐流程。
 
-### 4. 自带 LUT 学习系统 · 最低 2 张照片学懂任何滤镜
+### 4. 多镜头切换 · 全手动 + 半自动曝光
+
+自动探测所有支持 RAW 输出的**逻辑与物理镜头**并一键切换。快门 / ISO 采用无极（对数）映射调节，支持**快门优先 / ISO 优先半自动**模式，让专业控制与快速抓拍兼顾。
+
+### 5. GPU 多帧降噪 · 暗光利器
+
+基于 **OpenGL ES 3.1 计算着色器**的 GPU 多帧对齐与融合管线：将 2~8 帧连拍 RAW 经金字塔粗到细对齐、按噪声水平加权融合为单帧，暗光下显著抑制噪点、保留细节。
+
+### 6. 自带 LUT 学习系统 · 最低 2 张照片学懂任何滤镜
 
 应用内置 LUT 学习引擎：
 
 - **最低仅需 2 张照片**，即可学习出任意滤镜（一张原图 + 一张带目标滤镜效果的图）
-- 自带 **35+** 款高质量胶片模拟滤镜（富士、理光、徕卡、宾得、Lumix 等经典胶片风格）
-- 学习引擎提供覆盖率 / 训练与验证误差可视化，帮助评估学到的滤镜质量
+- 采用 **MLS（移动最小二乘）** 拟合生成 33³ 3D LUT，实时显示累积像素覆盖率与拟合误差统计
+- 自带 **56** 款高质量胶片模拟滤镜（富士、理光、徕卡、宾得、Lumix 等经典胶片风格）
+- 配合 **3D 向量场可视化**，直观查看 LUT 的色彩映射关系（起点=原色、终点=映射色、方向=偏移量），可拖拽旋转缩放
 
-### 5. 内置图库与照片管理
+### 7. 静态图套用滤镜 · 所见即所得的后期
+
+从图库任选一张照片，GPU 实时预览 LUT 滤镜效果：**强度可调**、**长按对比原图**，满意后保存全分辨率 JPG 到相册。
+
+### 8. 内置图库与照片管理
 
 - 应用内置 **图库**，按相册分组浏览照片，带缩略图缓存，点击即可选图应用滤镜
-- 照片弹窗支持查看 **EXIF 信息**、**删除**照片，操作反馈清晰直观
+- 照片弹窗支持查看 **EXIF 信息**（相机型号 / 光圈 / 快门 / ISO 等）、**删除**、**复制**，操作反馈清晰直观
 
-### 6. 可自定义的设置中心与主题
+### 9. 可自定义的设置中心与主题
 
-- **设置对话框**按需展示所有参数（开关 / 滑块 / 色调曲线 / 多帧降噪等），并支持**自由拖拽排序**，稳定持久化到本地
+- **设置对话框**按需展示 **17 项**参数（开关 / 滑块 / 色调曲线 / 多帧降噪 / 主题），并支持**自由拖拽排序**、**一键重置**，稳定持久化到本地
 - 内置 **8 款主题**（棉花糖、马卡龙、脏脏莓咖、蜜桃薄荷、夜樱、浅樱、石墨、醉莓），一键切换、全局生效
 
-### 7. 功能极简
+### 10. 功能极简
 
 没有广告、没有推送、没有账号系统、没有花哨的社区功能。只保留拍摄最核心的能力：**干净、专注、可离线使用。**
 
-> **兼容性说明：** 目前仅在 **Samsung Galaxy S23 Ultra** 上测试过，其它设备上的表现可能有所差异。
+> **兼容性说明：** 目前仅在 **Samsung Galaxy S23 Ultra** 上测试过，其它设备上的表现可能有所差异。支持 **minSdk 26 (Android 8.0)** 及以上，仅提供 **arm64-v8a / x86_64** 64 位架构；GPU 多帧降噪额外要求 **OpenGL ES 3.1 + GL_EXT_gpu_shader5**。
 
 ## 🛠 技术栈
 
@@ -56,25 +69,29 @@
 | --- | --- |
 | 语言 | Kotlin · C/C++ (NDK) |
 | 相机 | Camera2 API，全手动控制（曝光/对焦/白平衡/多镜头） |
-| 渲染 | OpenGL ES 实时 RAW 渲染管线 |
-| 原生 | CMake + JNI，C++ 实现色调曲线 / LUT 生成等 |
+| 渲染 | OpenGL ES 3.x 实时 RAW 渲染管线 · 3.1 计算着色器多帧融合 |
+| 原生 | CMake + JNI，C++ 实现色调曲线 / MLS LUT 生成等 |
 | 平台 | minSdk 26 · targetSdk 36，支持 arm64-v8a / x86_64 |
 
 ## 📂 项目结构（部分）
 
 ```
 app/src/main/java/com/classic/camera/
-├── RawPipeline.kt        # 核心 RAW 处理管线
-├── CameraController.kt   # Camera2 控制 / 对焦 / 多镜头
-├── ManualController.kt   # 全手动参数控制
-├── GpuAlignMerge.kt      # GPU 对齐与多帧合成
-├── FilmicHrEngine.kt     # 胶片感影调引擎
-├── LearnFilterActivity.kt# LUT 学习系统
-├── ToneCurve / CurveEditor  # 自定义色调曲线
-├── SettingsAdapter / SettingsItem # 可拖拽排序的设置中心
+├── MainActivity.kt        # 主拍照界面（RAW 实时取景 / 多镜头 / 快门）
+├── RawPipeline.kt         # 核心 GPU RAW 处理管线
+├── CameraController.kt    # Camera2 控制 / 对焦 / 多帧连拍
+├── ManualController.kt    # 全手动 + 半自动曝光控制
+├── GpuAlignMerge.kt       # GPU 多帧对齐与融合（计算着色器）
+├── FilmicHrEngine.kt      # 胶片感高光重建引擎
+├── LearnFilterActivity.kt # LUT 学习系统（MLS 拟合）
+├── ApplyFilterActivity.kt # 静态图套用滤镜
+├── VectorFieldRenderer.kt # 3D 向量场可视化
+├── CurveEditorView.kt     # 自定义色调曲线编辑器
+├── LensInfo / LensStore   # 镜头探测与持久化
+├── SettingsAdapter / SettingsItem # 17 项可拖拽排序设置中心
 ├── ThemeUtils / ThemeSelectorAdapter # 8 款主题切换
 ├── GalleryActivity / PhotoPopupDialog # 内置图库与照片管理
-└── assets/filters/*.cube    # 35+ 款胶片模拟 LUT
+└── assets/filters/*.cube    # 56 款胶片模拟 LUT
 ```
 
 ## 🚀 构建
