@@ -1140,8 +1140,9 @@ class MainActivity : AppCompatActivity() {
                 }
                 latch.await()
                 it.pendingCaptureLatch = null
-                // 根据手机朝向旋转 JPEG 像素（不依赖 EXIF Orientation）
-                bitmap?.let { bmp -> rotateBitmap(bmp, deviceOrientation) } ?: bitmap
+                // 根据快门时快照的手机朝向旋转 JPEG 像素（不依赖 EXIF Orientation）
+                val captureOrientation = cameraController?.deviceOrientation ?: deviceOrientation
+                bitmap?.let { bmp -> rotateBitmap(bmp, captureOrientation) } ?: bitmap
             }
             // GPU 多帧融合处理器（在 GL 线程运行，CountDownLatch 同步）
             val aligner = gpuAlignMerge
