@@ -17,22 +17,24 @@ object LutEngine {
     }
 
     /**
-     * 移动最小二乘（MLS）拟合 33×33×33 3D LUT。
-     * 样本映射到已覆盖体素，空洞通过多轮迭代逐层填充：
-     * 每轮用已填充体素做数据，对该层空洞做距离加权的局部二次多项式拟合。
+     * 学习会话（分块流式）：内存与像素总数 N 无关，恒定占用体素网格 + 抽样蓄水池。
      *
-     * @param origPixels  原图 ARGB 像素数组
-     * @param filtPixels  滤镜图 ARGB 像素数组
-     * @param numPixels   像素数量
-     * @param outLutArray 预分配的 FloatArray(33*33*33*3)，接收 LUT 数据
-     * @param outStats    预分配的 FloatArray(9)，接收 [平均误差, 平均误差, 最大误差, 最大误差, 最差输入R, G, B, 二次拟合数, 线性拟合数]
-     * @return 最大误差 (0~1)
+     * 流程：createSession() → 多次 addChunk() 累积 → finalize() 出 LUT 并释放会话。
+     *
+     * addChunk 输入为「唯一原色」及其「平均滤镜色」和「出现频次」三份并行数组，
+     * 频次用于频率加权（出现越多的颜色影响越大）与误差评估抽样。
      */
-    external fun fitMlsLut(
+    external fun createSession(): Long
+
+    external fun addChunk(
+        session: Long,
         origPixels: IntArray,
         filtPixels: IntArray,
-        numPixels: Int,
-        outLutArray: FloatArray,
-        outStats: FloatArray
-    ): Float
+        counts: IntArray,
+        offset: Int,
+        num: Int
+    )
+
+    /** @param outLutArray 预分配 FloatArray(33*33*33*3) 接收 LUT；@param outStats 预分配 FloatArray(9)。返回最大误差(0~1)。 */
+    external fun finalize(session: Long, outLutArray: FloatArray, outStats: FloatArray): Float
 }

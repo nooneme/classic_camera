@@ -50,54 +50,82 @@ object LutStrideSampler {
         return result
     }
 
-    fun sample(
-        origBitmap: Bitmap,
-        filtBitmap: Bitmap,
-        seenOrigColors: MutableMap<Int, Int>,
-        allFiltPixels: MutableList<Int>
-    ): Triple<IntArray, IntArray, Int> {
+    /**
+     * 采样结果：按「唯一原色」聚合，给出该色的平均滤镜输出与出现频次。
+     * 三份并行数组长度 = 唯一原色数（远小于像素总数），供 native 频率加权散播。
+     */
+    data class SampledData(
+        val origColors: IntArray,
+        val avgFiltColors: IntArray,
+        val counts: IntArray,
+        val totalPixels: Int
+    )
+
+    fun sample(origBitmap: Bitmap, filtBitmap: Bitmap): SampledData {
         val width = origBitmap.width
         val height = origBitmap.height
 
-        val origList = mutableListOf<Int>()
-        val filtList = mutableListOf<Int>()
-
         val origRow = IntArray(width)
         val filtRow = IntArray(width)
+
+        // 原色(24-bit) -> 在并行数组中的索引
+        val indexByColor = HashMap<Int, Int>()
+
+        // 用原始 int 数组（可增长）代替装箱 List，避免海量 Integer 装箱把堆打爆
+        var oArr = IntArray(256)
+        var cArr = IntArray(256)
+        var sR = IntArray(256)
+        var sG = IntArray(256)
+        var sB = IntArray(256)
+        var n = 0
+
+        fun ensure(cap: Int) {
+            if (cap > oArr.size) {
+                val ns = oArr.size * 2
+                oArr = oArr.copyOf(ns)
+                cArr = cArr.copyOf(ns)
+                sR = sR.copyOf(ns)
+                sG = sG.copyOf(ns)
+                sB = sB.copyOf(ns)
+            }
+        }
 
         for (y in 0 until height) {
             origBitmap.getPixels(origRow, 0, width, 0, y, width, 1)
             filtBitmap.getPixels(filtRow, 0, width, 0, y, width, 1)
             for (x in 0 until width) {
-                val origColor = origRow[x]
-                val origRgb = origColor and 0x00FFFFFF
-                val existingIndex = seenOrigColors[origRgb]
-                if (existingIndex != null) {
-                    if (existingIndex < allFiltPixels.size) {
-                        allFiltPixels[existingIndex] = averageColor(allFiltPixels[existingIndex], filtRow[x] and 0x00FFFFFF)
-                    } else {
-                        val localIdx = existingIndex - allFiltPixels.size
-                        filtList[localIdx] = averageColor(filtList[localIdx], filtRow[x] and 0x00FFFFFF)
-                    }
+                val origColor = origRow[x] and 0x00FFFFFF
+                val f = filtRow[x]
+                val idx = indexByColor[origColor]
+                if (idx != null) {
+                    cArr[idx]++
+                    sR[idx] += (f shr 16) and 0xFF
+                    sG[idx] += (f shr 8) and 0xFF
+                    sB[idx] += f and 0xFF
                 } else {
-                    seenOrigColors[origRgb] = allFiltPixels.size + filtList.size
-                    origList.add(origRgb)
-                    filtList.add(filtRow[x] and 0x00FFFFFF)
+                    ensure(n + 1)
+                    indexByColor[origColor] = n
+                    oArr[n] = origColor
+                    cArr[n] = 1
+                    sR[n] = (f shr 16) and 0xFF
+                    sG[n] = (f shr 8) and 0xFF
+                    sB[n] = f and 0xFF
+                    n++
                 }
             }
         }
 
-        val count = origList.size
-        return Triple(origList.toIntArray(), filtList.toIntArray(), count)
-    }
-
-    private fun averageColor(a: Int, b: Int): Int {
-        val ar = (a shr 16) and 0xFF
-        val ag = (a shr 8) and 0xFF
-        val ab = a and 0xFF
-        val br = (b shr 16) and 0xFF
-        val bg = (b shr 8) and 0xFF
-        val bb = b and 0xFF
-        return ((ar + br) / 2 shl 16) or ((ag + bg) / 2 shl 8) or ((ab + bb) / 2)
+        val origArr = IntArray(n)
+        val filtArr = IntArray(n)
+        val cntArr = IntArray(n)
+        var total = 0
+        for (i in 0 until n) {
+            origArr[i] = oArr[i]
+            val c = cArr[i]
+            cntArr[i] = c
+            total += c
+            filtArr[i] = ((sR[i] / c) shl 16) or ((sG[i] / c) shl 8) or (sB[i] / c)
+        }
+        return SampledData(origArr, filtArr, cntArr, total)
     }
 }

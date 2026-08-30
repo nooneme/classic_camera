@@ -5,19 +5,19 @@
 #include <cstring>
 #include <cfloat>
 #include <set>
+#include <random>
 #include <utility>
 
 static const int LUT_SIZE = 33;
 static const int TOTAL_NODES = LUT_SIZE * LUT_SIZE * LUT_SIZE;
 // MLS 邻域半径（网格单元数）：拟合一个空洞时参考多大局部区域的数据
 static const int MLS_R = 6;
-
 // MLS 二次多项式基项数：1, r, g, b, r², g², b², rg, rb, gb
 static const int MLS_BASIS = 10;
 // MLS 单点近邻上限（超出按距离截断）
 static const int MLS_MAX_NEIGHBORS = 200;
-// 统计误差时的最大评估点数（过多时抽稀）
-static const int EVAL_SAMPLE_LIMIT = 8000;
+// 误差评估的加权蓄水池容量（~8000 个均匀样本）
+static const int EVAL_K = 8000;
 
 // 26 邻域偏移（3×3×3 立方体去掉自身）及其欧氏距离权重 1/dist
 static const int NEIGHBOR_DX[26] = {
@@ -40,11 +40,16 @@ static const float NEIGHBOR_W[26] = {
 
 struct Vec3 { float r, g, b; };
 
-// 单个数据点：输入颜色 + 到滤镜图的偏移(dr,dg,db) + 权重(恒为1)
-struct Point {
-    float r, g, b;
-    float dr, dg, db;
-    float w;
+// 误差评估的加权样本（按频次加权，Efraimidis–Spirakis 保留 key 最大的 EVAL_K 个）
+struct WeightedSample {
+    float key;              // = u^(1/count)，count 越大 key 越接近 1，越易入选
+    float r, g, b;          // 输入色
+    float actR, actG, actB; // 滤镜真实输出色
+};
+struct KeyCmp {
+    bool operator()(const WeightedSample& a, const WeightedSample& b) const {
+        return a.key < b.key;
+    }
 };
 
 static inline float clamp01(float x) {
@@ -103,32 +108,16 @@ static bool gaussSolve(int n, float* A, float* b) {
     return true;
 }
 
-// 从像素对构建数据点：每个像素一个点，记录颜色与到滤镜图的偏移
-static int buildPoints(jint* orig, jint* filt, int num, std::vector<Point>& pts) {
-    pts.reserve((size_t)num);
-
-    for (int i = 0; i < num; ++i) {
-        int r = (orig[i] >> 16) & 0xFF, g = (orig[i] >> 8) & 0xFF, b = orig[i] & 0xFF;
-        int fR = (filt[i] >> 16) & 0xFF, fG = (filt[i] >> 8) & 0xFF, fB = filt[i] & 0xFF;
-        float dr = (fR - r) / 255.0f, dg = (fG - g) / 255.0f, db = (fB - b) / 255.0f;
-        pts.push_back({r / 255.0f, g / 255.0f, b / 255.0f, dr, dg, db, 1.0f});
-    }
-    return (int)pts.size();
-}
-
 // ── MLS 局部拟合：以查询点 (r,g,b) 为原点的局部坐标系里，
 //    用近邻点二次多项式拟合局部函数，多项式在原点处的值即预测输出色。
 //    邻域 R 已限定范围，区域内各近邻点等权参与，不再做距离加权 ──
 static void mlsFitPts(const std::vector<Vec3>& in, const std::vector<Vec3>& outv,
                       float r, float g, float b, Vec3* result) {
     int n = (int)in.size();
-    // 二次基有 10 个未知数，需 ≥10 个点才良定；点数不足时降级为线性基（4 未知数）
     bool quad = (n >= MLS_BASIS);
     int B = quad ? MLS_BASIS : 4;
 
-    // 基函数按特征量级归一化（列缩放），使 ATA 对角线量级一致，
-    // 统一小岭正则才能对各项均匀生效：常数=1，线性=ρ，二次=ρ²
-    const float rho = (float)MLS_R / (float)(LUT_SIZE - 1);  // 邻域半径的色空间宽度
+    const float rho = (float)MLS_R / (float)(LUT_SIZE - 1);
     const float rho2 = rho * rho;
     float sc[MLS_BASIS] = {
         1.0f, rho, rho, rho,
@@ -151,9 +140,6 @@ static void mlsFitPts(const std::vector<Vec3>& in, const std::vector<Vec3>& outv
             bB[i] += fb[i] * outv[k].b;
         }
     }
-    // 岭正则：相对 ATA 迹施加（原 1e-6 绝对量对 n~100 的对角几乎无作用）。
-    // 均匀作用于列归一基，等价于对二次项实际系数更重的收缩（1/rho²≈28×），
-    // 抑制稀疏区域局部二次拟合的过冲/振荡。
     float regTrace = 0.0f;
     for (int i = 0; i < B; ++i) regTrace += ATA[i * B + i];
     float reg = 0.03f * regTrace / (float)B;
@@ -168,7 +154,6 @@ static void mlsFitPts(const std::vector<Vec3>& in, const std::vector<Vec3>& outv
     memcpy(Ac, ATA, sizeof(float) * B * B);
     memcpy(solB, bB, sizeof(float) * B); gaussSolve(B, Ac, solB);
 
-    // 查询点即局部原点 (0,0,0)，基函数除常数项外全为 0 → 预测值 = 常数项系数
     result->r = solR[0];
     result->g = solG[0];
     result->b = solB[0];
@@ -199,7 +184,6 @@ static void sampleLut(const std::vector<Vec3>& lut, float r, float g, float b, V
     out->b = (lut[i000].b * (1 - dx) + lut[i100].b * dx) * (1 - dy) +
              (lut[i010].b * (1 - dx) + lut[i110].b * dx) * dy;
 
-    // 沿 z 方向三线性插值
     Vec3 top = {lut[i001].r * (1 - dx) + lut[i101].r * dx,
                 lut[i001].g * (1 - dx) + lut[i101].g * dx,
                 lut[i001].b * (1 - dx) + lut[i101].b * dx};
@@ -212,60 +196,94 @@ static void sampleLut(const std::vector<Vec3>& lut, float r, float g, float b, V
     out->b = out->b * (1 - dz) + top.b * dz;
 }
 
-extern "C" JNIEXPORT jfloat JNICALL
-Java_com_classic_camera_LutEngine_fitMlsLut(
-    JNIEnv* env, jobject thiz,
-    jintArray orig_pixels, jintArray filt_pixels,
-    jint num_pixels, jfloatArray out_lut_array,
-    jfloatArray out_stats) {
+// ── 学习会话：跨多次 addChunk 持久累积，内存与像素总数 N 无关 ──
+struct LutSession {
+    std::vector<Vec3>  outVal;   // TOTAL_NODES 体素累计输出色
+    std::vector<float> wsum;     // TOTAL_NODES 体素累计权重（含频次）
+    std::vector<char>  filled;   // TOTAL_NODES 已覆盖标记
+    std::set<WeightedSample, KeyCmp> top;   // 加权蓄水池（key 最大 EVAL_K 个）
+    std::mt19937 rng;
 
-    jint* orig = env->GetIntArrayElements(orig_pixels, nullptr);
-    jint* filt = env->GetIntArrayElements(filt_pixels, nullptr);
+    LutSession() : outVal(TOTAL_NODES, {0, 0, 0}),
+                   wsum(TOTAL_NODES, 0.0f), filled(TOTAL_NODES, 0),
+                   rng(123456789u) {
+    }
+};
 
-    std::vector<Point> pts;
-    int nPts = buildPoints(orig, filt, num_pixels, pts);
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_classic_camera_LutEngine_createSession(JNIEnv*, jclass) {
+    LutSession* s = new LutSession();
+    return (jlong)s;
+}
 
-    // ── 1. 种子：按三线性权重把样本散播到相邻体素（已覆盖体素保存真实输出色） ──
-    std::vector<Vec3> outVal(TOTAL_NODES, {0, 0, 0});
-    std::vector<float> wsum(TOTAL_NODES, 0.0f);
-    std::vector<char> filled(TOTAL_NODES, 0);
-    for (int i = 0; i < nPts; ++i) {
-        const Point& p = pts[i];
-        float fx = p.r * (LUT_SIZE - 1), fy = p.g * (LUT_SIZE - 1), fz = p.b * (LUT_SIZE - 1);
+// ── 分块喂入：每批唯一色 (orig, 平均滤镜色, 频次)，
+//    散播进体素（权重 × 频次，实现频率加权），并做加权蓄水池抽样 ──
+extern "C" JNIEXPORT void JNICALL
+Java_com_classic_camera_LutEngine_addChunk(
+    JNIEnv* env, jclass,
+    jlong ptr, jintArray origArr, jintArray filtArr, jintArray cntArr,
+    jint offset, jint num) {
+    LutSession* s = (LutSession*)ptr;
+    jint* orig = env->GetIntArrayElements(origArr, nullptr);
+    jint* filt = env->GetIntArrayElements(filtArr, nullptr);
+    jint* cnt  = env->GetIntArrayElements(cntArr, nullptr);
+
+    std::uniform_real_distribution<float> ud(1e-9f, 1.0f);
+    for (int i = 0; i < num; ++i) {
+        int ii = offset + i;
+        int r = (orig[ii] >> 16) & 0xFF, g = (orig[ii] >> 8) & 0xFF, b = orig[ii] & 0xFF;
+        int fR = (filt[ii] >> 16) & 0xFF, fG = (filt[ii] >> 8) & 0xFF, fB = filt[ii] & 0xFF;
+        int c = cnt[ii];
+        if (c <= 0) continue;
+        float pr = r / 255.0f, pg = g / 255.0f, pb = b / 255.0f;
+        float actR = fR / 255.0f, actG = fG / 255.0f, actB = fB / 255.0f;
+
+        // 三线性散播，权重 × count（频率加权：出现越多的颜色影响越大）
+        float fx = pr * (LUT_SIZE - 1), fy = pg * (LUT_SIZE - 1), fz = pb * (LUT_SIZE - 1);
         int x0 = (int)floorf(fx), y0 = (int)floorf(fy), z0 = (int)floorf(fz);
         int x1 = std::min(x0 + 1, LUT_SIZE - 1);
         int y1 = std::min(y0 + 1, LUT_SIZE - 1);
         int z1 = std::min(z0 + 1, LUT_SIZE - 1);
         float wx = fx - x0, wy = fy - y0, wz = fz - z0;
-
-        Vec3 val = {clamp01(p.r + p.dr), clamp01(p.g + p.dg), clamp01(p.b + p.db)};
-        for (int dz = 0; dz < 2; ++dz) {
-            for (int dy = 0; dy < 2; ++dy) {
+        for (int dz = 0; dz < 2; ++dz)
+            for (int dy = 0; dy < 2; ++dy)
                 for (int dx = 0; dx < 2; ++dx) {
                     int idx = (dx ? x1 : x0) + (dy ? y1 : y0) * LUT_SIZE + (dz ? z1 : z0) * LUT_SIZE * LUT_SIZE;
-                    float w = (dx ? wx : 1.0f - wx) * (dy ? wy : 1.0f - wy) * (dz ? wz : 1.0f - wz);
-                    outVal[idx].r += w * val.r;
-                    outVal[idx].g += w * val.g;
-                    outVal[idx].b += w * val.b;
-                    wsum[idx] += w * p.w;
+                    float w = (dx ? wx : 1.0f - wx) * (dy ? wy : 1.0f - wy) * (dz ? wz : 1.0f - wz) * (float)c;
+                    s->outVal[idx].r += w * actR;
+                    s->outVal[idx].g += w * actG;
+                    s->outVal[idx].b += w * actB;
+                    s->wsum[idx] += w;
                 }
-            }
-        }
+
+        // 加权蓄水池（Efraimidis–Spirakis）：key = u^(1/count)，保留 key 最大 EVAL_K 个
+        float key = std::pow(ud(s->rng), 1.0f / (float)c);
+        s->top.insert({key, pr, pg, pb, actR, actG, actB});
+        if ((int)s->top.size() > EVAL_K) s->top.erase(s->top.begin());
     }
+
+    env->ReleaseIntArrayElements(origArr, orig, 0);
+    env->ReleaseIntArrayElements(filtArr, filt, 0);
+    env->ReleaseIntArrayElements(cntArr, cnt, 0);
+}
+
+// ── 结算：归一化 → MLS 动态优先填充 → 高斯平滑 → 输出 LUT + 误差统计 ──
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_classic_camera_LutEngine_finalize(
+    JNIEnv* env, jclass, jlong ptr, jfloatArray out_lut_array, jfloatArray out_stats) {
+    LutSession* s = (LutSession*)ptr;
+    std::vector<char>& filled = s->filled;
+
+    // 1. 归一化体素（按含频次的权重平均），标记已覆盖
     for (int idx = 0; idx < TOTAL_NODES; ++idx) {
-        if (wsum[idx] > 0.0f) {
-            outVal[idx].r /= wsum[idx];
-            outVal[idx].g /= wsum[idx];
-            outVal[idx].b /= wsum[idx];
+        if (s->wsum[idx] > 0.0f) {
+            s->outVal[idx].r /= s->wsum[idx];
+            s->outVal[idx].g /= s->wsum[idx];
+            s->outVal[idx].b /= s->wsum[idx];
             filled[idx] = 1;
         }
     }
 
-    // ── 2. 动态优先级填充：26 邻域已填充近邻的欧氏距离加权和越大者越优先 ──
-    // score[idx]：每个空洞体素当前的已填充近邻加权数（随填充动态更新）
-    std::vector<float> score(TOTAL_NODES, 0.0f);
-    // 候选集合：按 (加权近邻数, 索引) 排序，取最大者填充
-    std::set<std::pair<float, int>> cand;
     // 预取坐标
     std::vector<int> cx(TOTAL_NODES), cy(TOTAL_NODES), cz(TOTAL_NODES);
     for (int idx = 0; idx < TOTAL_NODES; ++idx) {
@@ -273,63 +291,48 @@ Java_com_classic_camera_LutEngine_fitMlsLut(
         cy[idx] = (idx / LUT_SIZE) % LUT_SIZE;
         cz[idx] = idx / (LUT_SIZE * LUT_SIZE);
     }
-
     auto idxOf = [](int x, int y, int z) {
         return x + y * LUT_SIZE + z * LUT_SIZE * LUT_SIZE;
     };
 
-    // 计算某体素 26 邻域内已填充近邻的欧氏距离加权和
+    // 2. 动态优先填充：26 邻域已填充近邻的加权和越大越优先
+    std::vector<float> score(TOTAL_NODES, 0.0f);
+    std::set<std::pair<float, int>> cand;
     auto computeScore = [&](int idx) {
-        float s = 0.0f;
+        float sc = 0.0f;
         int x = cx[idx], y = cy[idx], z = cz[idx];
         for (int k = 0; k < 26; ++k) {
             int nx = x + NEIGHBOR_DX[k], ny = y + NEIGHBOR_DY[k], nz = z + NEIGHBOR_DZ[k];
-            if (nx < 0 || nx >= LUT_SIZE || ny < 0 || ny >= LUT_SIZE ||
-                nz < 0 || nz >= LUT_SIZE) continue;
-            if (filled[idxOf(nx, ny, nz)]) s += NEIGHBOR_W[k];
+            if (nx < 0 || nx >= LUT_SIZE || ny < 0 || ny >= LUT_SIZE || nz < 0 || nz >= LUT_SIZE) continue;
+            if (filled[idxOf(nx, ny, nz)]) sc += NEIGHBOR_W[k];
         }
-        return s;
+        return sc;
     };
+    for (int idx = 0; idx < TOTAL_NODES; ++idx)
+        if (!filled[idx]) { score[idx] = computeScore(idx); cand.insert({score[idx], idx}); }
 
-    // 初始：所有空洞体素入候选集
-    for (int idx = 0; idx < TOTAL_NODES; ++idx) {
-        if (!filled[idx]) {
-            score[idx] = computeScore(idx);
-            cand.insert({score[idx], idx});
-        }
-    }
-
-    // MLS 参数：邻域半径
     const int R = MLS_R;
     const float cellW = 1.0f / (float)(LUT_SIZE - 1);
-
-    // ── 3. 迭代填充：每轮取加权近邻数最大的空洞做 MLS，填完更新其周围空洞的分数 ──
-    // 统计二次 / 线性拟合的空洞数量（供 UI 展示百分比）
     int fitQuadCount = 0, fitLinCount = 0;
     while (!cand.empty()) {
-        auto it = cand.end();
-        --it;
+        auto it = cand.end(); --it;
         int idx = it->second;
         cand.erase(it);
-
         int x = cx[idx], y = cy[idx], z = cz[idx];
 
         std::vector<Vec3> in, outv;
         in.reserve(128); outv.reserve(128);
         for (int dz = -R; dz <= R; ++dz) {
-            int nz = z + dz;
-            if (nz < 0 || nz >= LUT_SIZE) continue;
+            int nz = z + dz; if (nz < 0 || nz >= LUT_SIZE) continue;
             for (int dy = -R; dy <= R; ++dy) {
-                int ny = y + dy;
-                if (ny < 0 || ny >= LUT_SIZE) continue;
+                int ny = y + dy; if (ny < 0 || ny >= LUT_SIZE) continue;
                 for (int dx = -R; dx <= R; ++dx) {
-                    int nx = x + dx;
-                    if (nx < 0 || nx >= LUT_SIZE) continue;
+                    int nx = x + dx; if (nx < 0 || nx >= LUT_SIZE) continue;
                     int ni = idxOf(nx, ny, nz);
                     if (!filled[ni]) continue;
                     if (in.size() < (size_t)MLS_MAX_NEIGHBORS) {
                         in.push_back({nx * cellW, ny * cellW, nz * cellW});
-                        outv.push_back(outVal[ni]);
+                        outv.push_back(s->outVal[ni]);
                     }
                 }
             }
@@ -338,14 +341,12 @@ Java_com_classic_camera_LutEngine_fitMlsLut(
         Vec3 result;
         if ((int)in.size() >= MLS_BASIS) fitQuadCount++; else fitLinCount++;
         mlsFitPts(in, outv, x * cellW, y * cellW, z * cellW, &result);
-        outVal[idx] = {clamp01(result.r), clamp01(result.g), clamp01(result.b)};
+        s->outVal[idx] = {clamp01(result.r), clamp01(result.g), clamp01(result.b)};
         filled[idx] = 1;
 
-        // 填充后更新 idx 周围 26 个仍为空洞的邻居的加权近邻数
         for (int k = 0; k < 26; ++k) {
             int nx = x + NEIGHBOR_DX[k], ny = y + NEIGHBOR_DY[k], nz = z + NEIGHBOR_DZ[k];
-            if (nx < 0 || nx >= LUT_SIZE || ny < 0 || ny >= LUT_SIZE ||
-                nz < 0 || nz >= LUT_SIZE) continue;
+            if (nx < 0 || nx >= LUT_SIZE || ny < 0 || ny >= LUT_SIZE || nz < 0 || nz >= LUT_SIZE) continue;
             int ni = idxOf(nx, ny, nz);
             if (filled[ni]) continue;
             cand.erase({score[ni], ni});
@@ -354,12 +355,10 @@ Java_com_classic_camera_LutEngine_fitMlsLut(
         }
     }
 
-    // ── 3.5 多轮高斯平滑：种子体素始终保留真实值，但其梯度经多轮
-    //    26 邻域反距离加权平均（雅可比式）逐步扩散到空洞，抹平 MLS 残差 ──
+    // 3. 多轮高斯平滑：种子体素保留真实值，梯度逐步扩散到空洞
     std::vector<char> isSeed(TOTAL_NODES, 0);
     for (int i = 0; i < TOTAL_NODES; ++i)
-        if (wsum[i] > 0.0f) isSeed[i] = 1;
-
+        if (s->wsum[i] > 0.0f) isSeed[i] = 1;
     const int SMOOTH_PASSES = 3;
     std::vector<Vec3> smoothBuf(TOTAL_NODES);
     for (int pass = 0; pass < SMOOTH_PASSES; ++pass) {
@@ -369,50 +368,42 @@ Java_com_classic_camera_LutEngine_fitMlsLut(
             Vec3 a = {0, 0, 0}; float ws = 0.0f;
             for (int k = 0; k < 26; ++k) {
                 int nx = x + NEIGHBOR_DX[k], ny = y + NEIGHBOR_DY[k], nz = z + NEIGHBOR_DZ[k];
-                if (nx < 0 || nx >= LUT_SIZE || ny < 0 || ny >= LUT_SIZE ||
-                    nz < 0 || nz >= LUT_SIZE) continue;
+                if (nx < 0 || nx >= LUT_SIZE || ny < 0 || ny >= LUT_SIZE || nz < 0 || nz >= LUT_SIZE) continue;
                 int ni = nx + ny * LUT_SIZE + nz * LUT_SIZE * LUT_SIZE;
                 float w = NEIGHBOR_W[k];
-                a.r += w * outVal[ni].r; a.g += w * outVal[ni].g; a.b += w * outVal[ni].b;
+                a.r += w * s->outVal[ni].r; a.g += w * s->outVal[ni].g; a.b += w * s->outVal[ni].b;
                 ws += w;
             }
             if (ws > 0.0f)
                 smoothBuf[i] = {clamp01(a.r / ws), clamp01(a.g / ws), clamp01(a.b / ws)};
         }
         for (int i = 0; i < TOTAL_NODES; ++i)
-            if (!isSeed[i]) outVal[i] = smoothBuf[i];
+            if (!isSeed[i]) s->outVal[i] = smoothBuf[i];
     }
 
-    env->ReleaseIntArrayElements(orig_pixels, orig, 0);
-    env->ReleaseIntArrayElements(filt_pixels, filt, 0);
-
+    // 4. 输出 LUT
     jsize outLen = env->GetArrayLength(out_lut_array);
     std::vector<jfloat> lutOut(outLen);
     for (int i = 0; i < TOTAL_NODES; ++i) {
-        lutOut[i * 3]     = outVal[i].r;
-        lutOut[i * 3 + 1] = outVal[i].g;
-        lutOut[i * 3 + 2] = outVal[i].b;
+        lutOut[i * 3]     = s->outVal[i].r;
+        lutOut[i * 3 + 1] = s->outVal[i].g;
+        lutOut[i * 3 + 2] = s->outVal[i].b;
     }
-    env->SetFloatArrayRegion(out_lut_array, 0, (jsize)outLen, lutOut.data());
+    env->SetFloatArrayRegion(out_lut_array, 0, outLen, lutOut.data());
 
-    // ── 4. 误差统计：用最终 LUT 三线性采样预测 vs 实际滤镜输出 ──
-    float sum = 0.0f; int cnt = 0; float mx = 0.0f;
+    // 5. 误差评估（加权蓄水池样本）
+    float sum = 0.0f, mx = 0.0f;
     int worstR = 0, worstG = 0, worstB = 0;
-    int step = std::max(1, nPts / EVAL_SAMPLE_LIMIT);
-    for (int i = 0; i < nPts; i += step) {
-        const Point& p = pts[i];
-        Vec3 pred;
-        sampleLut(outVal, p.r, p.g, p.b, &pred);
-        float actR = clamp01(p.r + p.dr);
-        float actG = clamp01(p.g + p.dg);
-        float actB = clamp01(p.b + p.db);
-        float err = fmaxf(fabsf(pred.r - actR), fmaxf(fabsf(pred.g - actG), fabsf(pred.b - actB)));
-        sum += err; ++cnt;
-        if (err > mx) {
-            mx = err;
-            worstR = (int)(p.r * 255.0f + 0.5f);
-            worstG = (int)(p.g * 255.0f + 0.5f);
-            worstB = (int)(p.b * 255.0f + 0.5f);
+    int cnt = (int)s->top.size();
+    for (auto it = s->top.begin(); it != s->top.end(); ++it) {
+        Vec3 pred; sampleLut(s->outVal, it->r, it->g, it->b, &pred);
+        float err = fmaxf(fabsf(pred.r - it->actR),
+                    fmaxf(fabsf(pred.g - it->actG), fabsf(pred.b - it->actB)));
+        sum += err;
+        if (err > mx) { mx = err;
+            worstR = (int)(it->r * 255.0f + 0.5f);
+            worstG = (int)(it->g * 255.0f + 0.5f);
+            worstB = (int)(it->b * 255.0f + 0.5f);
         }
     }
     float avg = cnt ? sum / cnt : 0.0f;
@@ -421,6 +412,6 @@ Java_com_classic_camera_LutEngine_fitMlsLut(
                        (float)fitQuadCount, (float)fitLinCount};
     env->SetFloatArrayRegion(out_stats, 0, 9, stats);
 
+    delete s;
     return mx;
 }
-

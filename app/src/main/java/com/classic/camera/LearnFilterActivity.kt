@@ -41,11 +41,10 @@ class LearnFilterActivity : AppCompatActivity() {
     private var originalUri: Uri? = null
     private var filterUri: Uri? = null
 
-    /** 累积的多组像素数据 */
-    private val allOrigPixels = mutableListOf<Int>()
-    private val allFiltPixels = mutableListOf<Int>()
-    /** 已见过的原图颜色 -> 在全局 allFiltPixels 中的索引，用于去重与滤镜颜色平均 */
-    private val seenOrigColors = mutableMapOf<Int, Int>()
+    /** 原生学习会话句柄（跨多次 addChunk 累积，finalize 后归零释放） */
+    private var sessionHandle = 0L
+    /** 已累积的像素总数（仅用于 UI 展示；数据本身散播在原生体素里，不驻留 Java 堆） */
+    private var accumulatedPixels = 0
 
     /** 是否正在学习中 */
     private var isLearning = false
@@ -119,11 +118,11 @@ class LearnFilterActivity : AppCompatActivity() {
     private fun updateButtons() {
         val hasImages = originalUri != null && filterUri != null
         btnAddImages.isEnabled = hasImages && !isAdding
-        btnStartLearn.isEnabled = allOrigPixels.isNotEmpty() && !isLearning
+        btnStartLearn.isEnabled = accumulatedPixels > 0 && !isLearning
     }
 
     private fun updatePixelCount() {
-        tvCoverage.text = "已累积 ${allOrigPixels.size} 像素"
+        tvCoverage.text = "已累积 $accumulatedPixels 像素"
         tvCoverage.setTextColor(getAttrColor(R.attr.textTertiary))
     }
 
@@ -154,21 +153,29 @@ class LearnFilterActivity : AppCompatActivity() {
                 origBmp.recycle()
                 filtBmp.recycle()
 
-                val (origSamples, filtSamples, sampleCount) = LutStrideSampler.sample(smoothOrig, smoothFilt, seenOrigColors, allFiltPixels)
+                val data = LutStrideSampler.sample(smoothOrig, smoothFilt)
                 smoothOrig.recycle()
                 smoothFilt.recycle()
 
-                allOrigPixels.addAll(origSamples.toList())
-                allFiltPixels.addAll(filtSamples.toList())
+                if (sessionHandle == 0L) sessionHandle = LutEngine.createSession()
+                // 分块喂给 native（避免一次性全量拷贝，块大小有界）
+                val chunk = 200_000
+                var i = 0
+                while (i < data.origColors.size) {
+                    val n = minOf(chunk, data.origColors.size - i)
+                    LutEngine.addChunk(sessionHandle, data.origColors, data.avgFiltColors, data.counts, i, n)
+                    i += n
+                }
+                accumulatedPixels += data.totalPixels
 
                 runOnUiThread {
                     updatePixelCount()
-                    Toast.makeText(this, "已添加 $sampleCount 像素", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "已添加 ${data.totalPixels} 像素", Toast.LENGTH_SHORT).show()
                     isAdding = false
                     btnAddImages.text = "添加图片"
                     updateButtons()
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e(TAG, "add images failed", e)
                 runOnUiThread {
                     Toast.makeText(this, "添加失败: ${e.message}", Toast.LENGTH_LONG).show()
@@ -181,7 +188,7 @@ class LearnFilterActivity : AppCompatActivity() {
     }
 
     private fun startLearning() {
-        if (allOrigPixels.isEmpty()) return
+        if (accumulatedPixels == 0) return
 
         isLearning = true
         updateButtons()
@@ -192,13 +199,12 @@ class LearnFilterActivity : AppCompatActivity() {
                 val totalNodes = LutEngine.LUT_SIZE * LutEngine.LUT_SIZE * LutEngine.LUT_SIZE
                 val outLut = FloatArray(totalNodes * 3)
                 val stats = FloatArray(9)
-                LutEngine.fitMlsLut(
-                    allOrigPixels.toIntArray(), allFiltPixels.toIntArray(),
-                    allOrigPixels.size, outLut, stats
-                )
+                LutEngine.finalize(sessionHandle, outLut, stats)
+                sessionHandle = 0L
                 showFitStats(stats, outLut)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e(TAG, "learning failed", e)
+                sessionHandle = 0L
                 runOnUiThread {
                     Toast.makeText(this, "学习失败: ${e.message}", Toast.LENGTH_LONG).show()
                     isLearning = false
