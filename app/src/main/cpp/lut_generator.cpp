@@ -216,6 +216,16 @@ Java_com_classic_camera_LutEngine_createSession(JNIEnv*, jclass) {
     return (jlong)s;
 }
 
+// 查询当前会话已覆盖（有样本落入）的 LUT 体素数，用于 UI 展示覆盖率；不改动会话。
+extern "C" JNIEXPORT jint JNICALL
+Java_com_classic_camera_LutEngine_coveredNodes(JNIEnv*, jclass, jlong ptr) {
+    LutSession* s = (LutSession*)ptr;
+    int cnt = 0;
+    for (int i = 0; i < TOTAL_NODES; ++i)
+        if (s->wsum[i] > 0.0f) ++cnt;
+    return (jint)cnt;
+}
+
 // ── 分块喂入：每批唯一色 (orig, 平均滤镜色, 频次)，
 //    散播进体素（权重 × 频次，实现频率加权），并做加权蓄水池抽样 ──
 extern "C" JNIEXPORT void JNICALL

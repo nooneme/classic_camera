@@ -22,8 +22,8 @@ import java.io.File
 class LearnFilterActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "LearnFilter"
-        /** 全部色彩空间大小（8-bit RGB，0~255 共 256³ 种颜色） */
-        private const val TOTAL_COLOR_SPACE = 256 * 256 * 256
+        /** LUT 网格体素总数（33×33×33），即全部可覆盖的采样点 */
+        private const val LUT_NODES = LutEngine.LUT_SIZE * LutEngine.LUT_SIZE * LutEngine.LUT_SIZE
     }
 
     private lateinit var originalImageArea: FrameLayout
@@ -45,8 +45,10 @@ class LearnFilterActivity : AppCompatActivity() {
 
     /** 原生学习会话句柄（跨多次 addChunk 累积，finalize 后归零释放） */
     private var sessionHandle = 0L
-    /** 已累积的不同颜色数（仅用于 UI 展示；数据本身散播在原生体素里，不驻留 Java 堆） */
-    private var accumulatedColors = 0
+    /** 当前会话已覆盖的 LUT 体素数（仅用于 UI 展示覆盖率） */
+    private var coveredNodesCount = 0
+    /** 是否已累积过数据（用于启用「开始学习」按钮） */
+    private var hasData = false
 
     /** 是否正在学习中 */
     private var isLearning = false
@@ -120,13 +122,13 @@ class LearnFilterActivity : AppCompatActivity() {
     private fun updateButtons() {
         val hasImages = originalUri != null && filterUri != null
         btnAddImages.isEnabled = hasImages && !isAdding
-        btnStartLearn.isEnabled = accumulatedColors > 0 && !isLearning
+        btnStartLearn.isEnabled = hasData && !isLearning
     }
 
     private fun updatePixelCount() {
-        val pct = accumulatedColors * 100.0 / TOTAL_COLOR_SPACE
-        tvCoverage.text = "已累积 $accumulatedColors 种颜色\n" +
-            "占全部色彩空间 ${"%.3f".format(pct)}%"
+        val pct = coveredNodesCount * 100.0 / LUT_NODES
+        tvCoverage.text = "已覆盖 LUT 采样点 $coveredNodesCount / $LUT_NODES\n" +
+            "覆盖率 ${"%.1f".format(pct)}%"
         tvCoverage.setTextColor(getAttrColor(R.attr.textTertiary))
     }
 
@@ -170,11 +172,12 @@ class LearnFilterActivity : AppCompatActivity() {
                     LutEngine.addChunk(sessionHandle, data.origColors, data.avgFiltColors, data.counts, i, n)
                     i += n
                 }
-                accumulatedColors += data.origColors.size
+                hasData = true
+                val covered = LutEngine.coveredNodes(sessionHandle)
 
                 runOnUiThread {
+                    coveredNodesCount = covered
                     updatePixelCount()
-                    Toast.makeText(this, "已添加 ${data.origColors.size} 种颜色", Toast.LENGTH_SHORT).show()
                     isAdding = false
                     btnAddImages.text = "添加图片"
                     updateButtons()
@@ -192,7 +195,7 @@ class LearnFilterActivity : AppCompatActivity() {
     }
 
     private fun startLearning() {
-        if (accumulatedColors == 0) return
+        if (!hasData) return
 
         isLearning = true
         updateButtons()
@@ -200,8 +203,7 @@ class LearnFilterActivity : AppCompatActivity() {
 
         Thread {
             try {
-                val totalNodes = LutEngine.LUT_SIZE * LutEngine.LUT_SIZE * LutEngine.LUT_SIZE
-                val outLut = FloatArray(totalNodes * 3)
+                val outLut = FloatArray(LUT_NODES * 3)
                 val stats = FloatArray(9)
                 LutEngine.finalize(sessionHandle, outLut, stats)
                 sessionHandle = 0L

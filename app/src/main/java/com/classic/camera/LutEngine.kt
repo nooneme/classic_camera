@@ -26,6 +26,9 @@ object LutEngine {
      */
     external fun createSession(): Long
 
+    /** 当前会话已覆盖（有样本落入）的 LUT 体素数，用于展示覆盖率；不会改动会话。 */
+    external fun coveredNodes(session: Long): Int
+
     external fun addChunk(
         session: Long,
         origPixels: IntArray,
