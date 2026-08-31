@@ -22,6 +22,8 @@ import java.io.File
 class LearnFilterActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "LearnFilter"
+        /** 全部色彩空间大小（8-bit RGB，0~255 共 256³ 种颜色） */
+        private const val TOTAL_COLOR_SPACE = 256 * 256 * 256
     }
 
     private lateinit var originalImageArea: FrameLayout
@@ -43,8 +45,8 @@ class LearnFilterActivity : AppCompatActivity() {
 
     /** 原生学习会话句柄（跨多次 addChunk 累积，finalize 后归零释放） */
     private var sessionHandle = 0L
-    /** 已累积的像素总数（仅用于 UI 展示；数据本身散播在原生体素里，不驻留 Java 堆） */
-    private var accumulatedPixels = 0
+    /** 已累积的不同颜色数（仅用于 UI 展示；数据本身散播在原生体素里，不驻留 Java 堆） */
+    private var accumulatedColors = 0
 
     /** 是否正在学习中 */
     private var isLearning = false
@@ -118,11 +120,13 @@ class LearnFilterActivity : AppCompatActivity() {
     private fun updateButtons() {
         val hasImages = originalUri != null && filterUri != null
         btnAddImages.isEnabled = hasImages && !isAdding
-        btnStartLearn.isEnabled = accumulatedPixels > 0 && !isLearning
+        btnStartLearn.isEnabled = accumulatedColors > 0 && !isLearning
     }
 
     private fun updatePixelCount() {
-        tvCoverage.text = "已累积 $accumulatedPixels 像素"
+        val pct = accumulatedColors * 100.0 / TOTAL_COLOR_SPACE
+        tvCoverage.text = "已累积 $accumulatedColors 种颜色\n" +
+            "占全部色彩空间 ${"%.3f".format(pct)}%"
         tvCoverage.setTextColor(getAttrColor(R.attr.textTertiary))
     }
 
@@ -166,11 +170,11 @@ class LearnFilterActivity : AppCompatActivity() {
                     LutEngine.addChunk(sessionHandle, data.origColors, data.avgFiltColors, data.counts, i, n)
                     i += n
                 }
-                accumulatedPixels += data.totalPixels
+                accumulatedColors += data.origColors.size
 
                 runOnUiThread {
                     updatePixelCount()
-                    Toast.makeText(this, "已添加 ${data.totalPixels} 像素", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "已添加 ${data.origColors.size} 种颜色", Toast.LENGTH_SHORT).show()
                     isAdding = false
                     btnAddImages.text = "添加图片"
                     updateButtons()
@@ -188,7 +192,7 @@ class LearnFilterActivity : AppCompatActivity() {
     }
 
     private fun startLearning() {
-        if (accumulatedPixels == 0) return
+        if (accumulatedColors == 0) return
 
         isLearning = true
         updateButtons()

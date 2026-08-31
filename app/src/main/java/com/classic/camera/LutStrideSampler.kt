@@ -57,8 +57,7 @@ object LutStrideSampler {
     data class SampledData(
         val origColors: IntArray,
         val avgFiltColors: IntArray,
-        val counts: IntArray,
-        val totalPixels: Int
+        val counts: IntArray
     )
 
     fun sample(origBitmap: Bitmap, filtBitmap: Bitmap): SampledData {
@@ -118,14 +117,12 @@ object LutStrideSampler {
         val origArr = IntArray(n)
         val filtArr = IntArray(n)
         val cntArr = IntArray(n)
-        var total = 0
         for (i in 0 until n) {
             origArr[i] = oArr[i]
             val c = cArr[i]
             cntArr[i] = c
-            total += c
             filtArr[i] = ((sR[i] / c) shl 16) or ((sG[i] / c) shl 8) or (sB[i] / c)
         }
-        return SampledData(origArr, filtArr, cntArr, total)
+        return SampledData(origArr, filtArr, cntArr)
     }
 }
