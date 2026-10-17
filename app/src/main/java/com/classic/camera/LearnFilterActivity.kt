@@ -156,9 +156,7 @@ class LearnFilterActivity : AppCompatActivity() {
                 }
 
                 val (smoothOrig, smoothFilt) = LutStrideSampler.preprocess(origBmp, filtBmp)
-                origBmp.recycle()
-                filtBmp.recycle()
-
+                // preprocess 可能直接返回入参本身，故不再单独 recycle origBmp/filtBmp
                 val data = LutStrideSampler.sample(smoothOrig, smoothFilt)
                 smoothOrig.recycle()
                 smoothFilt.recycle()

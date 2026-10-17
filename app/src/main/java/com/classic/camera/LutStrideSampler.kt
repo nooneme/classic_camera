@@ -5,49 +5,38 @@ import android.graphics.Bitmap
 object LutStrideSampler {
 
     /**
-     * 采样前预处理：将两图统一尺寸并对各自做 3×3 轻量模糊，抑制滤镜图上的模拟噪点。
-     * 返回两图均须调用 recycle()。
+     * 颜色量化位移：每通道右移 Q 位后再聚合，把唯色数硬顶在 2^(3*(8-Q))。
+     * Q=2 → 6bit/通道（64 级）→ 最多 262144 个桶，比 33³ LUT 更细，
+     * 内存恒定有界，避免全色图（16.7M 唯色）把 HashMap 打爆。
      */
-    fun preprocess(origBitmap: Bitmap, filtBitmap: Bitmap): Pair<Bitmap, Bitmap> {
-        var orig = origBitmap
-        var filt = filtBitmap
-        if (orig.width != filt.width || orig.height != filt.height) {
-            filt = Bitmap.createScaledBitmap(filt, orig.width, orig.height, true)
-        }
-        orig = boxBlur(orig)
-        filt = boxBlur(filt)
-        return Pair(orig, filt)
+    private const val QUANT_SHIFT = 2
+
+    /** 把 24-bit 原色量化成一个桶 key（用于 HashMap 分组，不改变代表色本身）。 */
+    private fun quantKey(color: Int): Int {
+        val r = (color shr 16) and 0xFF
+        val g = (color shr 8) and 0xFF
+        val b = color and 0xFF
+        val s = 8 - QUANT_SHIFT
+        return ((r shr QUANT_SHIFT) shl (s * 2)) or
+               ((g shr QUANT_SHIFT) shl s) or
+               (b shr QUANT_SHIFT)
     }
 
-    private fun boxBlur(bitmap: Bitmap): Bitmap {
-        val w = bitmap.width
-        val h = bitmap.height
-        val src = IntArray(w * h)
-        bitmap.getPixels(src, 0, w, 0, 0, w, h)
-        val out = IntArray(w * h)
-
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                var r = 0; var g = 0; var b = 0; var n = 0
-                for (dy in -1..1) {
-                    for (dx in -1..1) {
-                        val yy = y + dy
-                        val xx = x + dx
-                        if (yy < 0 || yy >= h || xx < 0 || xx >= w) continue
-                        val c = src[yy * w + xx]
-                        r += (c shr 16) and 0xFF
-                        g += (c shr 8) and 0xFF
-                        b += c and 0xFF
-                        n++
-                    }
-                }
-                out[y * w + x] = (0xFF shl 24) or (r / n shl 16) or (g / n shl 8) or (b / n)
-            }
+    /**
+     * 采样前预处理：仅将两图统一尺寸，不做模糊。
+     *
+     * 色卡等大图无需去噪，去掉 3×3 box blur 可省下每图两倍宽高 IntArray 的峰值内存。
+     *
+     * 约定：返回的两图由调用方负责 recycle()；被替换掉的入参已在此处回收，
+     * 因此调用方不要再单独 recycle 入参。
+     */
+    fun preprocess(origBitmap: Bitmap, filtBitmap: Bitmap): Pair<Bitmap, Bitmap> {
+        if (origBitmap.width == filtBitmap.width && origBitmap.height == filtBitmap.height) {
+            return Pair(origBitmap, filtBitmap)
         }
-
-        val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        result.setPixels(out, 0, w, 0, 0, w, h)
-        return result
+        val scaledFilt = Bitmap.createScaledBitmap(filtBitmap, origBitmap.width, origBitmap.height, true)
+        filtBitmap.recycle()
+        return Pair(origBitmap, scaledFilt)
     }
 
     /**
@@ -67,8 +56,8 @@ object LutStrideSampler {
         val origRow = IntArray(width)
         val filtRow = IntArray(width)
 
-        // 原色(24-bit) -> 在并行数组中的索引
-        val indexByColor = HashMap<Int, Int>()
+        // 量化桶 key -> 在并行数组中的索引
+        val indexByKey = HashMap<Int, Int>()
 
         // 用原始 int 数组（可增长）代替装箱 List，避免海量 Integer 装箱把堆打爆
         var oArr = IntArray(256)
@@ -94,8 +83,9 @@ object LutStrideSampler {
             filtBitmap.getPixels(filtRow, 0, width, 0, y, width, 1)
             for (x in 0 until width) {
                 val origColor = origRow[x] and 0x00FFFFFF
+                val key = quantKey(origColor)
                 val f = filtRow[x]
-                val idx = indexByColor[origColor]
+                val idx = indexByKey[key]
                 if (idx != null) {
                     cArr[idx]++
                     sR[idx] += (f shr 16) and 0xFF
@@ -103,7 +93,8 @@ object LutStrideSampler {
                     sB[idx] += f and 0xFF
                 } else {
                     ensure(n + 1)
-                    indexByColor[origColor] = n
+                    indexByKey[key] = n
+                    // 代表色用真实首见值，保证落在 0..255 且贴近桶内实际色
                     oArr[n] = origColor
                     cArr[n] = 1
                     sR[n] = (f shr 16) and 0xFF
