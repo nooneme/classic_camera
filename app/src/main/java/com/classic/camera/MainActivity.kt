@@ -730,12 +730,12 @@ class MainActivity : AppCompatActivity() {
                 formatValue = { it.toInt().toString() },
                 value = prefs.getFloat("hl_threshold", 0f)))
             add(SettingsItem("black_point", SettingsViewType.SLIDER, "黑点",
-                sliderMax = 200f, sliderStep = 1f,
-                valueToSlider = { it + 100f }, sliderToValue = { it - 100f },
+                sliderMax = 400f, sliderStep = 1f,
+                valueToSlider = { it + 200f }, sliderToValue = { it - 200f },
                 formatValue = { it.toInt().toString() },
                 value = prefs.getFloat("black_point", 0f)))
             add(SettingsItem("shadow_comp", SettingsViewType.SLIDER, "阴影压缩",
-                sliderMax = 100f, sliderStep = 1f,
+                sliderMax = 200f, sliderStep = 1f,
                 formatValue = { it.toInt().toString() },
                 value = prefs.getFloat("shadow_comp", 50f)))
             add(SettingsItem("contrast", SettingsViewType.SLIDER, "对比度",

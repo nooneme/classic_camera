@@ -906,8 +906,12 @@ class RawPipeline : GLSurfaceView.Renderer {
             GLES30.glGenTextures(1, t, 0)
             shCurveTexId = t[0]
         }
-        val b = (blackPoint / 100f).coerceIn(-1f, 1f) * 0.2f
-        val sr = 0.015f * shadowComp
+        val b = (blackPoint / 100f).coerceIn(-2f, 2f) * 0.2f
+        // 阴影压缩：滑块范围已扩至 0..200（行程翻倍），但底层曲线安全域为 sr<=1.5，
+        // 故分段映射：0→0、默认 50→0.75、满格 200→1.5，保证 0/默认观感与效果上限不变，
+        // 高段获得更细的调节粒度。
+        val sr = if (shadowComp <= 50f) 0.015f * shadowComp
+                 else 0.75f + 0.005f * (shadowComp - 50f)
         val n = 256
         val vals = DoubleArray(n)
         for (i in 0 until n) {
@@ -1202,7 +1206,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1f(uniToneMap.uExpScale, Math.pow(2.0, exposureComp.toDouble()).toFloat())
         GLES30.glUniform1f(uniToneMap.uHlComp, hlComp)
         GLES30.glUniform1f(uniToneMap.uHlThreshold, hlThreshold)
-        GLES30.glUniform1f(uniToneMap.uBlack, (blackPoint / 100f).coerceIn(-1f, 1f) * 0.2f)
+        GLES30.glUniform1f(uniToneMap.uBlack, (blackPoint / 100f).coerceIn(-2f, 2f) * 0.2f)
         GLES30.glUniform1f(uniToneMap.uShadowComp, shadowComp)
         GLES30.glUniform1f(uniToneMap.uContrast, contrast)
         GLES30.glUniform1f(uniToneMap.uAvg, lumaAvg)
@@ -1759,7 +1763,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1f(uniToneMap.uExpScale, Math.pow(2.0, exposureComp.toDouble()).toFloat())
         GLES30.glUniform1f(uniToneMap.uHlComp, hlComp)
         GLES30.glUniform1f(uniToneMap.uHlThreshold, hlThreshold)
-        GLES30.glUniform1f(uniToneMap.uBlack, (blackPoint / 100f).coerceIn(-1f, 1f) * 0.2f)
+        GLES30.glUniform1f(uniToneMap.uBlack, (blackPoint / 100f).coerceIn(-2f, 2f) * 0.2f)
         GLES30.glUniform1f(uniToneMap.uShadowComp, shadowComp)
         GLES30.glUniform1f(uniToneMap.uContrast, contrast)
         GLES30.glUniform1f(uniToneMap.uAvg, lumaAvg)
