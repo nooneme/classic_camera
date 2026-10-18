@@ -146,6 +146,7 @@ class CameraController(
 
     /** 打开镜头并开始 RAW repeating 预览（RAW 当 preview target）。 */
     fun open(lens: LensInfo) {
+        StartupTrace.mark("CameraController.open begin")
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             Log.e(LOG_TAG, "no camera permission")
@@ -156,6 +157,7 @@ class CameraController(
         // 同时递增 seq 作废任何在途的旧 onOpened 回调。
         resetFocus()
         openSeq++
+        firstFrameDelivered = false
         teardownInternal()
         val mySeq = openSeq
         currentLens = lens
@@ -163,6 +165,7 @@ class CameraController(
         try {
             cameraManager.openCamera(lens.logicalCameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
+                    StartupTrace.mark("CameraController.onOpened")
                     if (mySeq != openSeq) { camera.close(); return } // 被新一轮取代
                     cameraDevice = camera
                     startSession(camera, lens)
@@ -180,6 +183,7 @@ class CameraController(
         }
     }
     @Volatile private var openSeq = 0
+    @Volatile private var firstFrameDelivered = false
 
     /** 关掉当前轮所占的 session/device/reader，但不递增序列号（close 时另递增）。 */
     private fun teardownInternal() {
@@ -259,6 +263,10 @@ class CameraController(
             }
             // 预览模式：取 Bayer 数据 + 动态 gain 回调
             try {
+                if (!firstFrameDelivered) {
+                    firstFrameDelivered = true
+                    StartupTrace.mark("CameraController first RAW frame delivered")
+                }
                 processRawPreviewFrame(img)
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "preview frame err", e)
@@ -271,6 +279,7 @@ class CameraController(
         val mySeq = openSeq
         val stateCb = object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(s: CameraCaptureSession) {
+                StartupTrace.mark("onConfigured (session ready)")
                 // 已被新一轮 open/close 取代则丢弃，避免旧会话误触发 onPreviewReady / 覆盖 session
                 if (mySeq != openSeq) { s.close(); return }
                 session = s

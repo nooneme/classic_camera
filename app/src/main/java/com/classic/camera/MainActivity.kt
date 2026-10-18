@@ -80,6 +80,12 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var previewDropFrames = false
     /** 待应用到 pipeline 的新镜头参数（等新会话配置完成后才真正应用）。 */
     @Volatile private var pendingLensParams: LensInfo? = null
+    /** 首帧预览日志只打一次。 */
+    @Volatile private var firstPreviewFrameLogged = false
+    /** onCreate 已同步打开相机：跳过紧随其后的首次 onResume 重开，避免双重打开。 */
+    private var cameraOpenedOnCreate = false
+    /** GPU 多帧管线是否已惰性初始化。 */
+    @Volatile private var alignerInitDone = false
 
     // Camera2 相关
     private lateinit var cameraManager: CameraManager
@@ -163,6 +169,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        StartupTrace.mark("MainActivity.onCreate begin")
 
         val themePref = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("theme", "classic")
         when (themePref) {
@@ -178,6 +185,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         setContentView(R.layout.activity_main)
+        StartupTrace.mark("setContentView done")
 
         // 使用中保持屏幕常亮（拍照取景不熄屏）
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -231,6 +239,7 @@ class MainActivity : AppCompatActivity() {
         val savedCurve = ToneCurve.load(prefs)
         val toneCurveNativeArray = savedCurve.toNativeArray()
         pipeline?.toneCurvePoints = toneCurveNativeArray
+        StartupTrace.mark("pipeline + prefs restored")
 
         // 恢复上次选择的滤镜
         currentFilterPath = prefs.getString("current_filter_path", "") ?: ""
@@ -247,6 +256,7 @@ class MainActivity : AppCompatActivity() {
         }
         tvStatusFilter?.text = if (currentFilterPath.isNotEmpty())
             java.io.File(currentFilterPath).nameWithoutExtension else ""
+        StartupTrace.mark("restore saved filter done (path='$currentFilterPath')")
 
         // ---- LUT 选择器初始化 ----
         lutRecyclerView = findViewById(R.id.lutRecyclerView)
@@ -282,12 +292,17 @@ class MainActivity : AppCompatActivity() {
             }
             filterLauncher.launch(intent)
         }
+        StartupTrace.mark("LUT selector init done")
 
         LutUtils.seedPresetFilters(this)
+        StartupTrace.mark("seedPresetFilters done")
         loadLutList()
+        StartupTrace.mark("loadLutList done")
         refreshLatestPhoto()
+        StartupTrace.mark("refreshLatestPhoto done")
 
         glSurfaceView.setRenderer(pipeline)
+        StartupTrace.mark("setRenderer done")
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
         val focusIndicator = findViewById<View>(R.id.focusIndicator)
         glSurfaceView.setOnTouchListener { _, event ->
@@ -325,9 +340,9 @@ class MainActivity : AppCompatActivity() {
         val gpuAligner = GpuAlignMerge()
         gpuAlignMerge = gpuAligner
         pipeline?.onGluReady = {
-            gpuAligner.init()
-            Log.d(LOG_TAG, "GPU multi-frame pipeline ready = ${gpuAligner.isSupported()}")
-            // GL 上下文已就绪，初始化色调曲线纹理
+            // GL 上下文（重新）就绪：多帧管线改为首次提多帧时惰性初始化，缩短启动时间
+            alignerInitDone = false
+            // 初始化色调曲线纹理（预览必需）
             pipeline?.toneCurvePoints?.let {
                 pipeline?.setToneCurve(it)
             }
@@ -346,8 +361,12 @@ class MainActivity : AppCompatActivity() {
         // 启动流程：有缓存直接进拍照界面，无缓存走探测
         val cached = LensStore.load(this)
         if (cached != null) {
+            StartupTrace.mark("enterCameraUI (cached) begin")
+            // onCreate 会同步打开相机，标记以便首次 onResume 跳过重复打开
+            if (checkCameraPermission()) cameraOpenedOnCreate = true
             enterCameraUI(cached)
         } else {
+            StartupTrace.mark("startDetection begin (no cache)")
             ensurePermission { startDetection() }
         }
 
@@ -396,6 +415,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        StartupTrace.mark("MainActivity.onCreate end")
     }
 
     // ================= 手动曝光控制 =================
@@ -929,6 +949,7 @@ class MainActivity : AppCompatActivity() {
         startBackgroundThread()
         backgroundHandler?.post {
             val lenses = discoverLenses()
+            StartupTrace.mark("discoverLenses done (${lenses.size} lenses)")
             LensStore.save(this@MainActivity, lenses)
             runOnUiThread {
                 stopBackgroundThread()
@@ -970,6 +991,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun selectLens(lens: LensInfo) {
+        StartupTrace.mark("selectLens(${lens.logicalCameraId}:${lens.physicalCameraId ?: ""}) called")
         ensurePermission {
             // 切换镜头时先保存上一支镜头的位置及半自动 AE 收敛值；首次加载（selectedLens==null）不覆盖已存值
             if (selectedLens != null) {
@@ -1017,6 +1039,7 @@ class MainActivity : AppCompatActivity() {
             // 否则 GL 线程可能用新参数重绘旧帧，导致偏色/颠倒/CFA 错乱。
             pendingLensParams = lens
             previewDropFrames = true
+            firstPreviewFrameLogged = false
             openSelectedLensPreview()
         }
     }
@@ -1093,12 +1116,14 @@ class MainActivity : AppCompatActivity() {
     /** 用当前选中镜头打开 RAW 预览。 */
     private fun openSelectedLensPreview() {
         val lens = selectedLens ?: return
+        StartupTrace.mark("openSelectedLensPreview begin")
         startBackgroundThread()
         val controller = cameraController ?: CameraController(this, cameraManager, backgroundHandler!!).also {
             cameraController = it
             it.manualController = manualController  // 注入手动曝光控制器
             // 新镜头会话配置完成（新镜头首帧前）：应用暂存的静态参数并放行渲染
             it.onPreviewReady = {
+                StartupTrace.mark("Camera onPreviewReady (session configured)")
                 val pl = pendingLensParams
                 if (pl != null) {
                     applyLensParamsToPipeline(pl)
@@ -1154,6 +1179,11 @@ class MainActivity : AppCompatActivity() {
                     it.pendingCaptureLatch = latch
                     glSurfaceView.queueEvent {
                         try {
+                            if (!alignerInitDone) {
+                                aligner.init()
+                                alignerInitDone = true
+                                Log.d(LOG_TAG, "GPU multi-frame pipeline ready = ${aligner.isSupported()}")
+                            }
                             result = aligner.process(frames, w, h, numTx, numTy, wl)
                         } catch (e: Exception) {
                             Log.e(LOG_TAG, "GPU multi-frame failed", e)
@@ -1182,6 +1212,10 @@ class MainActivity : AppCompatActivity() {
         controller.onRawFrame = rawFrame@ { buf, w, h, wbR, wbG, wbB, blR, blG, blB, wl ->
             // 切换镜头期间丢弃残留帧：避免旧帧被新参数重绘（偏色/颠倒/CFA 错乱）
             if (previewDropFrames) return@rawFrame
+            if (!firstPreviewFrameLogged) {
+                firstPreviewFrameLogged = true
+                StartupTrace.mark("first RAW preview frame (${w}x$h)")
+            }
             val p = pipeline
             if (p != null) {
                 p.rawBuffer = buf
@@ -1500,11 +1534,20 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        StartupTrace.mark("onResume begin")
         accelerometerSensor?.let { sensorManager?.registerListener(sensorListener, it, SensorManager.SENSOR_DELAY_UI) }
         glSurfaceView.onResume()
-        selectedLens?.let { selectLens(it) }
+        if (cameraOpenedOnCreate) {
+            // onCreate 已打开相机，这次 resume 不再重开（否则会 teardown 后重开）
+            cameraOpenedOnCreate = false
+            StartupTrace.mark("onResume skip reopen (already opened in onCreate)")
+        } else {
+            selectedLens?.let { selectLens(it) }
+        }
+        StartupTrace.mark("onResume selectLens done")
         loadLutList()
         refreshLatestPhoto()
+        StartupTrace.mark("onResume end")
     }
 
     override fun onDestroy() {

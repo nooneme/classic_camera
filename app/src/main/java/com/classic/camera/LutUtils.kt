@@ -69,6 +69,17 @@ object LutUtils {
     }
 
     fun loadCubeFile(file: File): FloatArray? {
+        // 快速路径：整文件读入字节，手写 ASCII 解析，避免逐行 String 与 Float 装箱
+        try {
+            val fast = CubeParser.parse(file.readBytes())
+            if (fast != null) return fast
+        } catch (_: Exception) {
+        }
+        // 回退：逐行解析，兼容各种非标准格式
+        return loadCubeFileSlow(file)
+    }
+
+    private fun loadCubeFileSlow(file: File): FloatArray? {
         var size = 0
         val floats = ArrayList<Float>(35937 * 3)
         file.bufferedReader().use { reader ->

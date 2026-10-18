@@ -471,6 +471,7 @@ class RawPipeline : GLSurfaceView.Renderer {
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        StartupTrace.mark("GL onSurfaceCreated begin")
         captureFbo = 0; captureTex = 0; captureTexW = 0; captureTexH = 0
         texAllocated = false; texW = 0; texH = 0
         rcdInitialized = false; rcdEnabled = false
@@ -578,15 +579,14 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
         uploadIdentityToneCurve()
 
-        // RCD 计算管线初始化
-        initRcd()
-
-        // 高光重建引擎初始化（先 release 确保 GL 上下文重建后能重新初始化）
+        // 注意：RCD / 高光重建 / GPU 多帧管线仅拍照时使用，不在预览首帧路径上编译，
+        // 改为首次使用时惰性初始化（见 renderCaptureToBitmap / gpuAlignMerge），以缩短启动到首帧的时间。
+        // 但上下文重建时需作废旧的高光重建程序名，确保下次使用时重建。
         hrEngine.release()
-        hrEngine.init()
 
-        // GPU 多帧管线初始化（context 已就绪）
+        // 色调曲线纹理等预览必需项（onGluReady 回调内完成），GPU 多帧初始化已移出
         onGluReady?.invoke()
+        StartupTrace.mark("GL onSurfaceCreated end (preview shaders compiled)")
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -1274,7 +1274,14 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1f(uniPost.uLutIntensity, lutIntensity)
 
         drawQuadRaw(uniPost.aPos, uniPost.aTexCoord)
+
+        if (!firstPreviewRenderedLogged) {
+            firstPreviewRenderedLogged = true
+            StartupTrace.mark("GL first preview frame rendered")
+        }
     }
+
+    @Volatile private var firstPreviewRenderedLogged = false
 
     // ====================== 黑电平扣除中间 FBO ======================
 
@@ -1634,6 +1641,10 @@ class RawPipeline : GLSurfaceView.Renderer {
         this.ccm = ccmColumnMajor
         this.cfaType = cfaType
         rawW = w; rawH = h
+
+        // 惰性初始化拍照专用管线：从预览首帧路径移出，缩短启动时间
+        if (!rcdInitialized) initRcd()
+        if (highlightReconstructionEnabled) hrEngine.init()
 
         val rotated = (orientation == 90 || orientation == 270)
         val outW = if (rotated) h else w
