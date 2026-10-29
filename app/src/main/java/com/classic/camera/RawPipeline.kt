@@ -147,6 +147,8 @@ class RawPipeline : GLSurfaceView.Renderer {
     private var lutTextureId = 0
     private var lutEnabled = false
     @Volatile var lutIntensity: Float = 1f
+    /** P3 首帧门控：true 时 onDrawFrame 提前返回（保持黑屏），等待启动期 LUT 异步恢复完成。 */
+    @Volatile var lutRestorePending = false
 
     // ---- 色调曲线 ----
     @Volatile var toneCurvePoints: FloatArray? = null
@@ -974,6 +976,9 @@ class RawPipeline : GLSurfaceView.Renderer {
 
         GLES30.glClearColor(0f, 0f, 0f, 1f)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+
+        // P3 首帧门控：启动期 LUT 异步恢复未完成前不渲染，避免先出无滤镜帧造成色彩跳变
+        if (lutRestorePending) return
 
         if (rawW <= 0 || rawH <= 0) return
 

@@ -50,6 +50,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -128,6 +130,17 @@ class MainActivity : AppCompatActivity() {
     private var lastPhotoUri: String = ""
     private var allPhotoUris: List<String> = emptyList()
     private var currentPhotoIndex: Int = 0
+
+    // P2/P3：启动期 IO 后台化
+    /** MediaStore 查询 + 照片缩略图解码（串行队列，防止结果乱序回帖）。 */
+    private val photoExecutor = Executors.newSingleThreadExecutor()
+    /** 上次选中滤镜 .cube 的后台解析（与 photoExecutor 相互独立、并行工作）。 */
+    private val lutExecutor = Executors.newSingleThreadExecutor()
+    /**
+     * P3 保险：滤镜恢复流程是否已结算（应用成功或用户已抢先选择均算结算）。
+     * dispatch 时在主线程置 false，恢复完成时在 GL 线程置 true；onGluReady 在 GL 线程读取。
+     */
+    @Volatile private var lutRestoreApplied = true
 
     // ---- LUT 选择器 ----
     private lateinit var lutAdapter: LutSelectorAdapter
@@ -241,22 +254,62 @@ class MainActivity : AppCompatActivity() {
         pipeline?.toneCurvePoints = toneCurveNativeArray
         StartupTrace.mark("pipeline + prefs restored")
 
-        // 恢复上次选择的滤镜
+        // 恢复上次选择的滤镜（P3：后台解析，主线程不再同步读约 1MB 的 .cube 文本）
         currentFilterPath = prefs.getString("current_filter_path", "") ?: ""
-        if (currentFilterPath.isNotEmpty()) {
-            val savedFile = java.io.File(currentFilterPath)
-            val savedLut = if (savedFile.exists()) LutUtils.loadCubeFile(savedFile) else null
-            if (savedLut != null) {
-                pipeline?.lutFloatArray = savedLut
-                pipeline?.lutSize = savedLut.let { LutUtils.lutSizeOf(it).takeIf { s -> s > 0 } } ?: LutUtils.LUT_SIZE
-            } else {
-                currentFilterPath = ""
-                prefs.edit().remove("current_filter_path").apply()
-            }
+        if (currentFilterPath.isNotEmpty() && !java.io.File(currentFilterPath).exists()) {
+            currentFilterPath = ""
+            prefs.edit().remove("current_filter_path").apply()
         }
         tvStatusFilter?.text = if (currentFilterPath.isNotEmpty())
             java.io.File(currentFilterPath).nameWithoutExtension else ""
-        StartupTrace.mark("restore saved filter done (path='$currentFilterPath')")
+        if (currentFilterPath.isNotEmpty()) {
+            val savedFile = java.io.File(currentFilterPath)
+            val expectedPath = currentFilterPath
+            pipeline?.lutRestorePending = true   // 拉起首帧门控：滤镜就位前预览保持黑屏
+            lutRestoreApplied = false
+            // 看门狗：解析抛异常 / 存储卡死等病态场景下强制解除门控，避免预览永久黑屏
+            glSurfaceView.postDelayed({
+                if (pipeline?.lutRestorePending == true) {
+                    Log.w(LOG_TAG, "LUT restore watchdog: force release first-frame gate")
+                    pipeline?.lutRestorePending = false
+                    lutRestoreApplied = true
+                    glSurfaceView.requestRender()
+                }
+            }, 1500L)
+            lutExecutor.execute {
+                // runCatching：解析异常也必须走完回调，否则门控无法解除
+                val savedLut = runCatching { LutUtils.loadCubeFile(savedFile) }.getOrNull()
+                StartupTrace.mark("saved LUT parsed (async, ${savedLut?.size ?: 0} floats)")
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) {
+                        pipeline?.lutRestorePending = false
+                        return@runOnUiThread
+                    }
+                    // 令牌守卫：恢复期间用户已手动切换滤镜则放弃应用（仍解除门控）
+                    val apply = savedLut != null && currentFilterPath == expectedPath
+                    if (savedLut == null && currentFilterPath == expectedPath) {
+                        // 与旧逻辑一致的降级：文件损坏 / 不可解析则清空选择
+                        currentFilterPath = ""
+                        tvStatusFilter?.text = ""
+                        lutAdapter.selectedPath = ""
+                        prefs.edit().remove("current_filter_path").apply()
+                    }
+                    // ★ 必须经主线程中转再 queueEvent：setRenderer 在本 onCreate 后半段
+                    // 才调用，后台线程提前 queueEvent 会因 mGLThread 为 null 直接 NPE；
+                    // runOnUiThread 投递的 Runnable 必然晚于整个 onCreate，天然安全
+                    glSurfaceView.queueEvent {
+                        if (apply) pipeline?.setLut(savedLut)
+                        pipeline?.lutRestorePending = false
+                        // 结算标志：无论是否应用都要置位。若用户抢先选择了其它滤镜而保留
+                        // false，下次 GL 重建时 onGluReady 会重新拉起门控，且已无回调解除，
+                        // 预览将永久黑屏。
+                        lutRestoreApplied = true
+                        glSurfaceView.requestRender()
+                    }
+                }
+            }
+        }
+        StartupTrace.mark("restore saved filter dispatched (async, path='$currentFilterPath')")
 
         // ---- LUT 选择器初始化 ----
         lutRecyclerView = findViewById(R.id.lutRecyclerView)
@@ -296,10 +349,9 @@ class MainActivity : AppCompatActivity() {
 
         LutUtils.seedPresetFilters(this)
         StartupTrace.mark("seedPresetFilters done")
-        loadLutList()
-        StartupTrace.mark("loadLutList done")
-        refreshLatestPhoto()
-        StartupTrace.mark("refreshLatestPhoto done")
+        // P4/P2：loadLutList 与 refreshLatestPhoto 仅在 onResume 执行（onResume 必然
+        // 紧跟 onCreate），这里不再预跑一遍。seedPresetFilters 保持在最前，保证二次
+        // 启动授权状态下 filters 目录先就绪、onResume 的 loadLutList 加载即有内容。
 
         glSurfaceView.setRenderer(pipeline)
         StartupTrace.mark("setRenderer done")
@@ -342,6 +394,12 @@ class MainActivity : AppCompatActivity() {
         pipeline?.onGluReady = {
             // GL 上下文（重新）就绪：多帧管线改为首次提多帧时惰性初始化，缩短启动时间
             alignerInitDone = false
+            // P3 保险：GL 上下文重建时若 LUT 恢复仍未结算（如启动后立刻切后台再回来），
+            // 重新拉起首帧门控，防止重建后的 onSurfaceCreated 只上传空的 lutFloatArray
+            // 而露出无滤镜帧；恢复回调到达后会统一解除门控。
+            if (!lutRestoreApplied && currentFilterPath.isNotEmpty()) {
+                pipeline?.lutRestorePending = true
+            }
             // 初始化色调曲线纹理（预览必需）
             pipeline?.toneCurvePoints?.let {
                 pipeline?.setToneCurve(it)
@@ -370,8 +428,15 @@ class MainActivity : AppCompatActivity() {
             ensurePermission { startDetection() }
         }
 
+        // P2：首次 MediaStore 查询回帖前禁用照片按钮，避免启动窗口内点开空弹窗
+        btnLastPhoto.isEnabled = false
+        btnLastPhoto.alpha = 0.35f
         btnLastPhoto.setOnClickListener {
-            val dialog = PhotoPopupDialog.newInstance(allPhotoUris, currentPhotoIndex)
+            // P2 守卫：后台列表尚未就绪时用最新一张兜底，避免启动瞬间点开空弹窗
+            val useFallback = allPhotoUris.isEmpty() && lastPhotoUri.isNotEmpty()
+            val uris = if (useFallback) listOf(lastPhotoUri) else allPhotoUris
+            val index = if (useFallback) 0 else currentPhotoIndex
+            val dialog = PhotoPopupDialog.newInstance(uris, index)
             dialog.onPhotoDeleted = {
                 refreshLatestPhoto()
             }
@@ -864,75 +929,96 @@ class MainActivity : AppCompatActivity() {
 
     // ================= 最后照片按钮 =================
 
-    /** 从 MediaStore 查询所有照片并更新按钮。 */
+    /** 从 MediaStore 查询所有照片并更新按钮（P2：查询整体移到后台线程）。 */
     private fun refreshLatestPhoto() {
         try {
-            val baseUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-            val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
-            val ids = mutableListOf<Long>()
-            contentResolver.query(baseUri, arrayOf(MediaStore.Images.Media._ID), null, null, sortOrder)?.use { cur ->
-                while (cur.moveToNext()) {
-                    ids.add(cur.getLong(0))
+            photoExecutor.execute {
+                val baseUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
+                val ids = mutableListOf<Long>()
+                try {
+                    contentResolver.query(baseUri, arrayOf(MediaStore.Images.Media._ID), null, null, sortOrder)?.use { cur ->
+                        while (cur.moveToNext()) {
+                            ids.add(cur.getLong(0))
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(LOG_TAG, "Failed to query photos", e)
+                    // 中途异常时 ids 可能是部分结果，显式清空以对齐旧实现的异常路径
+                    ids.clear()
+                }
+                val uris = ids.map { Uri.withAppendedPath(baseUri, it.toString()).toString() }
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    allPhotoUris = uris
+                    currentPhotoIndex = 0
+                    lastPhotoUri = allPhotoUris.firstOrNull() ?: ""
+                    refreshLastPhotoButton()
+                    val hasPhotos = allPhotoUris.isNotEmpty()
+                    btnLastPhoto.isEnabled = hasPhotos
+                    btnLastPhoto.alpha = if (hasPhotos) 1f else 0.35f
                 }
             }
-            allPhotoUris = ids.map { Uri.withAppendedPath(baseUri, it.toString()).toString() }
-            currentPhotoIndex = 0
-            lastPhotoUri = allPhotoUris.firstOrNull() ?: ""
-        } catch (_: Exception) {
-            allPhotoUris = emptyList()
-            lastPhotoUri = ""
+        } catch (_: RejectedExecutionException) {
+            // Activity 已销毁、执行器已关闭
         }
-        refreshLastPhotoButton()
-        val hasPhotos = allPhotoUris.isNotEmpty()
-        btnLastPhoto.isEnabled = hasPhotos
-        btnLastPhoto.alpha = if (hasPhotos) 1f else 0.35f
     }
 
-    /** 根据 lastPhotoUri 更新按钮图标。 */
+    /** 根据 lastPhotoUri 更新按钮图标（P2：解码移到后台线程，主线程只设置 drawable）。 */
     private fun refreshLastPhotoButton() {
         if (lastPhotoUri.isEmpty()) {
-            btnLastPhoto.setImageResource(R.drawable.ic_photo)
-            btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.CENTER
-            btnLastPhoto.background = ContextCompat.getDrawable(this, R.drawable.btn_icon_md_bg)
-        } else {
-            try {
-                val uri = Uri.parse(lastPhotoUri)
-                val targetSize = (44 * resources.displayMetrics.density + 0.5f).toInt()
-                var sampleSize = 1
-                contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                    val opts = BitmapFactory.Options().apply {
-                        inJustDecodeBounds = true
-                    }
-                    BitmapFactory.decodeFileDescriptor(pfd.fileDescriptor, null, opts)
-                    while (opts.outWidth / (sampleSize * 2) > targetSize && opts.outHeight / (sampleSize * 2) > targetSize) {
-                        sampleSize *= 2
-                    }
-                }
-                var bmp: Bitmap? = null
-                contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                    val opts = BitmapFactory.Options().apply {
-                        inSampleSize = sampleSize
-                    }
-                    bmp = BitmapFactory.decodeFileDescriptor(pfd.fileDescriptor, null, opts)
-                }
-                if (bmp != null) {
-                    val rounded = androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(resources, bmp)
-                    rounded.cornerRadius = (8 * resources.displayMetrics.density + 0.5f)
-                    btnLastPhoto.setImageDrawable(rounded)
-                    btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-                    btnLastPhoto.background = null
-                } else {
-                    btnLastPhoto.setImageResource(R.drawable.ic_photo)
-                    btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.CENTER
-                    btnLastPhoto.background = ContextCompat.getDrawable(this, R.drawable.btn_icon_md_bg)
-                }
-            } catch (e: Exception) {
-                Log.e(LOG_TAG, "Failed to load photo thumbnail", e)
-                btnLastPhoto.setImageResource(R.drawable.ic_photo)
-                btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.CENTER
-                btnLastPhoto.background = ContextCompat.getDrawable(this, R.drawable.btn_icon_md_bg)
-            }
+            setLastPhotoPlaceholder()
+            return
         }
+        val uri = Uri.parse(lastPhotoUri)
+        val targetSize = (44 * resources.displayMetrics.density + 0.5f).toInt()
+        val density = resources.displayMetrics.density
+        try {
+            photoExecutor.execute {
+                var bmp: Bitmap? = null
+                try {
+                    var sampleSize = 1
+                    contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                        val opts = BitmapFactory.Options().apply {
+                            inJustDecodeBounds = true
+                        }
+                        BitmapFactory.decodeFileDescriptor(pfd.fileDescriptor, null, opts)
+                        while (opts.outWidth / (sampleSize * 2) > targetSize && opts.outHeight / (sampleSize * 2) > targetSize) {
+                            sampleSize *= 2
+                        }
+                    }
+                    contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                        val opts = BitmapFactory.Options().apply {
+                            inSampleSize = sampleSize
+                        }
+                        bmp = BitmapFactory.decodeFileDescriptor(pfd.fileDescriptor, null, opts)
+                    }
+                } catch (e: Exception) {
+                    Log.e(LOG_TAG, "Failed to load photo thumbnail", e)
+                }
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    if (bmp != null) {
+                        val rounded = androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(resources, bmp)
+                        rounded.cornerRadius = (8 * density + 0.5f)
+                        btnLastPhoto.setImageDrawable(rounded)
+                        btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                        btnLastPhoto.background = null
+                    } else {
+                        setLastPhotoPlaceholder()
+                    }
+                }
+            }
+        } catch (_: RejectedExecutionException) {
+            // Activity 已销毁、执行器已关闭
+        }
+    }
+
+    /** 左下角照片按钮的占位样式（无照片 / 加载失败共用）。 */
+    private fun setLastPhotoPlaceholder() {
+        btnLastPhoto.setImageResource(R.drawable.ic_photo)
+        btnLastPhoto.scaleType = android.widget.ImageView.ScaleType.CENTER
+        btnLastPhoto.background = ContextCompat.getDrawable(this, R.drawable.btn_icon_md_bg)
     }
 
     companion object {
@@ -1557,6 +1643,9 @@ class MainActivity : AppCompatActivity() {
         gpuAlignMerge?.let { aligner ->
             glSurfaceView.queueEvent { aligner.release() }
         }
+        // P2/P3：丢弃排队中的 IO 任务；在途任务的 UI 回帖已被 isDestroyed 守卫拦下
+        photoExecutor.shutdownNow()
+        lutExecutor.shutdownNow()
     }
 
     // ---- ColorSpaceTransform / BlackLevelPattern 文本解析（LensInfo 存的 toString） ----
