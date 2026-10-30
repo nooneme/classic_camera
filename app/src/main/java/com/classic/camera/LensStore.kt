@@ -160,4 +160,52 @@ object LensStore {
         val autoExpNs = prefs.getLong("auto_exp_ns", -1L)
         return SliderState(shutter, iso, autoIso, autoExpNs)
     }
+
+    // ---- 白平衡增益缓存 ----
+    // 主键按镜头存；另保留一个全局兜底，供从未拿到过有效 AWB 增益的镜头
+    // （典型是前置）在会话重建后初始化，避免回落到 [1,1,1] 导致绿屏。
+    private const val KEY_WB_LAST = "wb_last_valid"
+
+    private fun wbKey(lensId: String) = "wb_$lensId"
+
+    /** 增益是否可用于渲染：拒绝 [1,1,1] 这类"无校正"值以及明显异常值。 */
+    private fun isUsableWbGains(g: FloatArray): Boolean {
+        if (g.size < 3) return false
+        for (i in 0..2) {
+            if (!g[i].isFinite() || g[i] < 0.05f || g[i] > 20f) return false
+        }
+        return kotlin.math.abs(g[0] - 1f) > 0.01f ||
+            kotlin.math.abs(g[1] - 1f) > 0.01f ||
+            kotlin.math.abs(g[2] - 1f) > 0.01f
+    }
+
+    /** 保存某镜头最近一次有效 WB 增益，同时更新全局兜底。 */
+    fun saveWbGains(context: Context, lensId: String, gains: FloatArray) {
+        if (!isUsableWbGains(gains)) return
+        val text = "${gains[0]},${gains[1]},${gains[2]}"
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(wbKey(lensId), text)
+            .putString(KEY_WB_LAST, text)
+            .apply()
+    }
+
+    /** 读取某镜头的 WB 增益；没有自己的记录时回退到全局兜底。 */
+    fun loadWbGains(context: Context, lensId: String): FloatArray? {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return decodeWbGains(prefs.getString(wbKey(lensId), null))
+            ?: decodeWbGains(prefs.getString(KEY_WB_LAST, null))
+    }
+
+    private fun decodeWbGains(text: String?): FloatArray? {
+        if (text.isNullOrEmpty()) return null
+        return try {
+            val parts = text.split(",")
+            if (parts.size < 3) return null
+            val g = FloatArray(3) { parts[it].trim().toFloat() }
+            if (isUsableWbGains(g)) g else null
+        } catch (e: Exception) {
+            null
+        }
+    }
 }

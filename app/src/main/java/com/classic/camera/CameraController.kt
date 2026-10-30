@@ -147,6 +147,8 @@ class CameraController(
     /** 打开镜头并开始 RAW repeating 预览（RAW 当 preview target）。 */
     fun open(lens: LensInfo) {
         StartupTrace.mark("CameraController.open begin")
+        // 切换/重开前，先把当前镜头的有效 WB 增益落盘（前置无有效增益时不会写入）
+        persistWbGainsForCurrentLens()
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             Log.e(LOG_TAG, "no camera permission")
@@ -161,6 +163,10 @@ class CameraController(
         teardownInternal()
         val mySeq = openSeq
         currentLens = lens
+        // WB 初始化：优先该镜头自己的缓存，其次全局兜底（前置通常走兜底，避免 [1,1,1] 绿屏）
+        wbFromHal = false
+        lastWbPersistNs = 0L
+        LensStore.loadWbGains(context, LensStore.lensId(lens))?.let { lastWBGain = it }
 
         try {
             cameraManager.openCamera(lens.logicalCameraId, object : CameraDevice.StateCallback() {
@@ -392,6 +398,33 @@ class CameraController(
     }
     @Volatile private var lastWBGain = floatArrayOf(1f, 1f, 1f)
 
+    /** 本会话是否从 HAL 拿到过有效 AWB 增益（决定是否写入该镜头的 WB 缓存）。 */
+    @Volatile private var wbFromHal = false
+
+    /** 上次 WB 缓存落盘时间（限流，避免每帧写 SharedPreferences）。 */
+    private var lastWbPersistNs = 0L
+
+    /** HAL 给出有效 AWB 增益：更新内存值，并限流写入缓存。 */
+    private fun onHalWbGains(gains: FloatArray) {
+        lastWBGain = gains
+        wbFromHal = true
+        val now = System.nanoTime()
+        if (now - lastWbPersistNs > 2_000_000_000L) {
+            lastWbPersistNs = now
+            persistWbGainsForCurrentLens()
+        }
+    }
+
+    /**
+     * 只有本会话确实拿到过 HAL 有效增益才写盘。
+     * 前置镜头借用的/无效的 [1,1,1] 不会被固化到它自己的记录里，继续使用全局兜底。
+     */
+    private fun persistWbGainsForCurrentLens() {
+        val lens = currentLens ?: return
+        if (!wbFromHal) return
+        LensStore.saveWbGains(context, LensStore.lensId(lens), lastWBGain)
+    }
+
     // ---- LSC 镜头阴影校正增益图 ----
     @Volatile var lscGainMap: FloatArray? = null
     @Volatile var lscGridCols: Int = 0
@@ -501,6 +534,7 @@ class CameraController(
     private var captureSnapshotWB: FloatArray? = null
 
     private fun startRawRepeating(session: CameraCaptureSession) {
+        val mySeq = openSeq
         try {
             val device = cameraDevice
             val reader = rawReader
@@ -515,6 +549,8 @@ class CameraController(
             val cb = object : CameraCaptureSession.CaptureCallback() {
                 override fun onCaptureCompleted(s: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
                     super.onCaptureCompleted(s, request, result)
+                    // 旧会话的残留结果不再影响新镜头
+                    if (mySeq != openSeq) return
                     // 更新白平衡 gain（动态）
                     var wbUpdated = false
                     val rggb = result.get(CaptureResult.COLOR_CORRECTION_GAINS)
@@ -524,7 +560,7 @@ class CameraController(
                         val b = rggb.blue
                         // 某些镜头（如前置）虽然提供 gains 但恒为 [1,1,1]（无实际校正）
                         if (kotlin.math.abs(r - 1f) > 0.01f || kotlin.math.abs(gAvg - 1f) > 0.01f || kotlin.math.abs(b - 1f) > 0.01f) {
-                            lastWBGain = floatArrayOf(r, gAvg, b)
+                            onHalWbGains(floatArrayOf(r, gAvg, b))
                             wbUpdated = true
                         }
                     }
@@ -540,13 +576,13 @@ class CameraController(
                                 val g = (raw[1] as? android.util.Rational)?.toFloat() ?: 0f
                                 val b = (raw[2] as? android.util.Rational)?.toFloat() ?: 0f
                                 if (r > 0f && b > 0f) {
-                                    lastWBGain = floatArrayOf(g / r, 1.0f, g / b)
+                                    onHalWbGains(floatArrayOf(g / r, 1.0f, g / b))
                                     wbUpdated = true
                                 }
                             }
                             if (!wbUpdated && raw is DoubleArray && raw.size >= 3) {
                                 if (raw[0] > 0.0 && raw[2] > 0.0) {
-                                    lastWBGain = floatArrayOf((raw[1] / raw[0]).toFloat(), 1.0f, (raw[1] / raw[2]).toFloat())
+                                    onHalWbGains(floatArrayOf((raw[1] / raw[0]).toFloat(), 1.0f, (raw[1] / raw[2]).toFloat()))
                                     wbUpdated = true
                                 }
                             }
@@ -1089,6 +1125,7 @@ class CameraController(
     }
 
     fun close() {
+        persistWbGainsForCurrentLens() // 作废回调/释放前保存当前镜头的有效 WB
         resetFocus()
         openSeq++ // 作废回调
         teardownInternal()
