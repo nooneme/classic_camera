@@ -116,7 +116,8 @@ fun saveBitmapAsJpeg(
     exposureTimeNs: Long? = null,
     aperture: Float? = null,
     focalLength: Float? = null,
-    focalLength35mm: Int? = null
+    focalLength35mm: Int? = null,
+    digitalZoomRatio: Double? = null
 ): Pair<String, Uri?> {
     val tStart = System.nanoTime()
     val resolver = context.contentResolver
@@ -137,7 +138,7 @@ fun saveBitmapAsJpeg(
         }
         val tCompressDone = System.nanoTime()
         // 写入 EXIF（IS_PENDING 仍为 1，相册不可见）
-        if (iso != null || exposureTimeNs != null || aperture != null || focalLength != null || focalLength35mm != null) {
+        if (iso != null || exposureTimeNs != null || aperture != null || focalLength != null || focalLength35mm != null || digitalZoomRatio != null) {
             try {
                 resolver.openFileDescriptor(uri, "rw")?.use { pfd ->
                     val exif = ExifInterface(pfd.fileDescriptor)
@@ -154,6 +155,13 @@ fun saveBitmapAsJpeg(
                     }
                     if (focalLength35mm != null) {
                         exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, focalLength35mm.toString())
+                    }
+                    if (digitalZoomRatio != null) {
+                        // ExifInterface 的 RATIONAL 字段要求 "分子/分母" 形式
+                        exif.setAttribute(
+                            ExifInterface.TAG_DIGITAL_ZOOM_RATIO,
+                            "${Math.round(digitalZoomRatio * 100)}/100"
+                        )
                     }
                     val dateStr = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date())
                     exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, dateStr)

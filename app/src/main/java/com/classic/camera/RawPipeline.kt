@@ -49,6 +49,14 @@ class RawPipeline : GLSurfaceView.Renderer {
     var mirror: Boolean = false
     var cfaType = 2
 
+    // ---- 数码变焦（仅预览/JPEG 裁切，DNG 仍保留全画幅）----
+    @Volatile var digitalZoomFactor: Float = 1f
+        private set
+
+    fun setDigitalZoom(factor: Float) {
+        digitalZoomFactor = factor.coerceIn(1f, 2f)
+    }
+
     // ---- 黑电平扣除中间 Pass ----
     private var progBlSub = 0
     private var blFbo = 0
@@ -398,6 +406,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         var uInputTex = 0
         var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0; var uLutIntensity = 0
         var uAspectScale = 0; var uOrientation = 0; var uMirror = 0
+        var uCropOrigin = 0; var uCropSize = 0
 
         fun lookup() {
             aPos = GLES30.glGetAttribLocation(id, "aPos")
@@ -410,6 +419,8 @@ class RawPipeline : GLSurfaceView.Renderer {
             uAspectScale = GLES30.glGetUniformLocation(id, "uAspectScale")
             uOrientation = GLES30.glGetUniformLocation(id, "uOrientation")
             uMirror = GLES30.glGetUniformLocation(id, "uMirror")
+            uCropOrigin = GLES30.glGetUniformLocation(id, "uCropOrigin")
+            uCropSize = GLES30.glGetUniformLocation(id, "uCropSize")
         }
     }
 
@@ -519,7 +530,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         progCcm = createProgram(VS, CCM_FS)
         uniCcm = CcmUniforms(progCcm).also { it.lookup() }
 
-        progPostProcess = createProgram(VS, POST_PROCESS_FS)
+        progPostProcess = createProgram(POST_VS, POST_PROCESS_FS)
         uniPost = PostProcessUniforms(progPostProcess).also { it.lookup() }
 
         progToneMap = createProgram(VS, TONE_MAP_FS)
@@ -846,6 +857,19 @@ class RawPipeline : GLSurfaceView.Renderer {
         val viewAspect = lastViewportW.toFloat() / lastViewportH.toFloat()
         return if (imageAspect > viewAspect) Pair(1f, viewAspect / imageAspect)
         else Pair(imageAspect / viewAspect, 1f)
+    }
+
+    /** 数码变焦：2× 为居中的 1/2×1/2 裁切；正方形裁切不改变宽高比。 */
+    private fun setCropUniforms(u: PostProcessUniforms, zoom: Float) {
+        val crop = ZoomCrop.centered(zoom)
+        GLES30.glUniform2f(u.uCropOrigin, crop.originU, crop.originV)
+        GLES30.glUniform2f(u.uCropSize, crop.sizeU, crop.sizeV)
+    }
+
+    /** 复用 PostProcess 程序的其他功能（静态图套滤镜等）必须显式恢复全画幅。 */
+    private fun resetCropUniforms(u: PostProcessUniforms) {
+        GLES30.glUniform2f(u.uCropOrigin, 0f, 0f)
+        GLES30.glUniform2f(u.uCropSize, 1f, 1f)
     }
 
     // ====================== ② 阴影/黑点曲线 LUT ======================
@@ -1270,6 +1294,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform2f(uniPost.uAspectScale, ppAx, ppAy)
         GLES30.glUniform1i(uniPost.uOrientation, orientation)
         GLES30.glUniform1i(uniPost.uMirror, if (mirror) 1 else 0)
+        setCropUniforms(uniPost, digitalZoomFactor)
 
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, gammaBufTexId)
@@ -1640,7 +1665,8 @@ class RawPipeline : GLSurfaceView.Renderer {
         whiteLevel: Float,
         wbR: Float, wbG: Float, wbB: Float,
         ccmColumnMajor: FloatArray,
-        cfaType: Int = 2
+        cfaType: Int = 2,
+        zoom: Float = digitalZoomFactor
     ): Bitmap? {
         if (w <= 0 || h <= 0 || bayer.size < w * h) return null
 
@@ -1656,8 +1682,10 @@ class RawPipeline : GLSurfaceView.Renderer {
         if (highlightReconstructionEnabled) hrEngine.init()
 
         val rotated = (orientation == 90 || orientation == 270)
-        val outW = if (rotated) h else w
-        val outH = if (rotated) w else h
+        val fullOutW = if (rotated) h else w
+        val fullOutH = if (rotated) w else h
+        val crop = ZoomCrop.centered(zoom)
+        val (outW, outH) = ZoomCrop.captureSize(fullOutW, fullOutH, crop)
 
         try { ensureCaptureFbo(outW, outH) } catch (e: Exception) { return null }
 
@@ -1813,6 +1841,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform2f(uniPost.uAspectScale, 1f, 1f)
         GLES30.glUniform1i(uniPost.uOrientation, orientation)
         GLES30.glUniform1i(uniPost.uMirror, if (mirror) 1 else 0)
+        setCropUniforms(uniPost, zoom)
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, ccmBufTexId)
         GLES30.glUniform1i(uniPost.uInputTex, 0)
@@ -1921,6 +1950,7 @@ class RawPipeline : GLSurfaceView.Renderer {
                     GLES30.glUniform2f(uniPost.uAspectScale, 1f, 1f)
                     GLES30.glUniform1i(uniPost.uOrientation, 0)
                     GLES30.glUniform1i(uniPost.uMirror, 0)
+                    resetCropUniforms(uniPost)
                     GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
                     GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, srcTex)
                     GLES30.glUniform1i(uniPost.uInputTex, 0)
@@ -2009,6 +2039,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform2f(uniPost.uAspectScale, ax, ay)
         GLES30.glUniform1i(uniPost.uOrientation, 0)
         GLES30.glUniform1i(uniPost.uMirror, 0)
+        resetCropUniforms(uniPost)
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, srcTex)
         GLES30.glUniform1i(uniPost.uInputTex, 0)
@@ -2407,6 +2438,34 @@ void main() {
         out vec2 vUV;
         void main(){
             vec2 uv = aTexCoord;
+            if (uMirror) uv.x = 1.0 - uv.x;
+            if (uOrientation == 0) {
+                vUV = vec2(uv.x, 1.0 - uv.y);
+            } else if (uOrientation == 90) {
+                vUV = vec2(uv.y, 1.0 - uv.x);
+            } else if (uOrientation == 180) {
+                vUV = vec2(1.0 - uv.x, uv.y);
+            } else {
+                vUV = vec2(1.0 - uv.y, uv.x);
+            }
+            gl_Position = vec4(aPos * uAspectScale, 0.0, 1.0);
+        }
+    """.trimIndent()
+
+    // ===== 最终输出专用 VS：先做数码变焦裁切，再做 mirror/orientation =====
+    private val POST_VS = """
+        #version 300 es
+        precision highp float;
+        layout(location=0) in vec2 aPos;
+        layout(location=1) in vec2 aTexCoord;
+        uniform vec2 uAspectScale;
+        uniform int uOrientation;
+        uniform bool uMirror;
+        uniform vec2 uCropOrigin;
+        uniform vec2 uCropSize;
+        out vec2 vUV;
+        void main(){
+            vec2 uv = uCropOrigin + aTexCoord * uCropSize;
             if (uMirror) uv.x = 1.0 - uv.x;
             if (uOrientation == 0) {
                 vUV = vec2(uv.x, 1.0 - uv.y);

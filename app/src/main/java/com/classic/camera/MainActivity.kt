@@ -174,6 +174,9 @@ class MainActivity : AppCompatActivity() {
     private var lensList: List<LensInfo> = emptyList()
     private var selectedLens: LensInfo? = null
 
+    /** 当前选中镜头是否开启 2× 数码变焦（再次点击同一镜头切换）。 */
+    @Volatile private var zoom2xEnabled = false
+
     private val LOG_TAG = "ClassicCamera"
 
     /** 权限暂存：用户授予权限后自动继续被中断的操作。 */
@@ -455,6 +458,7 @@ class MainActivity : AppCompatActivity() {
                     startCaptureVibration()
                     val useMulti = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("multi_frame", false)
                     cameraController?.deviceOrientation = deviceOrientation
+                    cameraController?.digitalZoom2x = zoom2xEnabled
 
                     if (useMulti) {
                         cameraController?.startMultiCapture { dngName, jpgName ->
@@ -1061,7 +1065,7 @@ class MainActivity : AppCompatActivity() {
                     .setAllCornerSizes(cornerRadius)
                     .build()
                 setTag(lens)
-                setOnClickListener { selectLens(lens) }
+                setOnClickListener { onLensButtonClick(lens) }
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT, btnHeight
                 ).apply { setMargins(btnMarginH, 0, btnMarginH, 0) }
@@ -1073,6 +1077,35 @@ class MainActivity : AppCompatActivity() {
             val lastId = LensStore.loadLastLensId(this)
             val lastLens = lastId?.let { id -> lensList.find { LensStore.lensId(it) == id } }
             selectLens(lastLens ?: lensList[lensList.size / 2])
+        }
+    }
+
+    /** 镜头按钮：点其它镜头 = 切换（并重置 1×）；点当前镜头 = 切换 2× 数码变焦。 */
+    private fun onLensButtonClick(lens: LensInfo) {
+        if (selectedLens !== lens) {
+            val wasZoomed = zoom2xEnabled
+            zoom2xEnabled = false
+            if (wasZoomed) applyZoomToPipeline()
+            selectLens(lens)
+        } else {
+            toggleDigitalZoom()
+        }
+    }
+
+    private fun currentZoomFactor(): Float = if (zoom2xEnabled) 2f else 1f
+
+    private fun toggleDigitalZoom() {
+        zoom2xEnabled = !zoom2xEnabled
+        applyZoomToPipeline()
+        refreshLensButtonStyles()
+        triggerHaptic(TICK)
+    }
+
+    private fun applyZoomToPipeline() {
+        val zoom = currentZoomFactor()
+        glSurfaceView.queueEvent {
+            pipeline?.setDigitalZoom(zoom)
+            glSurfaceView.requestRender()
         }
     }
 
@@ -1130,12 +1163,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 遍历镜头按钮，选中项高亮，其余恢复默认。 */
+    /** 遍历镜头按钮，选中项高亮，其余恢复默认；选中项在 2× 时追加标记。 */
     private fun refreshLensButtonStyles() {
         for (i in 0 until lensButtonBar.childCount) {
             val child = lensButtonBar.getChildAt(i)
             if (child is MaterialButton) {
                 val isSelected = child.tag === selectedLens
+                val lens = child.tag as? LensInfo
+                if (lens != null) {
+                    val base = if (lens.lensFacing == CameraMetadata.LENS_FACING_FRONT) "自拍"
+                               else formatFocalLength(lens.focalLength, lens)
+                    child.text = if (isSelected && zoom2xEnabled) "$base 2×" else base
+                }
                 if (isSelected) {
                     child.backgroundTintList = android.content.res.ColorStateList.valueOf(
                         getAttrColor(R.attr.accentColor))
@@ -1167,6 +1206,8 @@ class MainActivity : AppCompatActivity() {
         // 传感器安装角度 + 自拍镜像
         p.orientation = lens.sensorOrientation
         p.mirror = (lens.lensFacing == CameraMetadata.LENS_FACING_FRONT)
+        // 新会话就绪后恢复当前数码变焦状态（GL 上下文重建 / onResume 重开也走这里）
+        p.setDigitalZoom(currentZoomFactor())
         // 切换镜头时清空旧的 LSC 数据，等待新帧的增益图
         p.lscGainMap = null
         p.lscGridCols = 0
@@ -1230,7 +1271,7 @@ class MainActivity : AppCompatActivity() {
             it.multiFrameCount = if (prefs.getBoolean("multi_frame", false)) prefs.getInt("multi_frame_count", 4).coerceIn(2, 8) else 1
             // GPU JPEG 处理器：通过 queueEvent 在 GL 线程渲染，CountDownLatch 同步等待
             // 返回 null 则跳过 JPEG 保存
-            it.gpuJpegProcessor = { rawShorts, w, h, blR, blG, blB, wl, wbR, wbG, wbB, ccm, cfa ->
+            it.gpuJpegProcessor = { rawShorts, w, h, blR, blG, blB, wl, wbR, wbG, wbB, ccm, cfa, zoom ->
                 val latch = CountDownLatch(1)
                 var bitmap: Bitmap? = null
                 val gains = colorTempGains
@@ -1239,7 +1280,7 @@ class MainActivity : AppCompatActivity() {
                     try {
                         bitmap = pipeline?.renderCaptureToBitmap(
                             rawShorts, w, h, blR, blG, blB, wl,
-                            wbR * gains[0], wbG * gains[1], wbB * gains[2], ccm, cfa
+                            wbR * gains[0], wbG * gains[1], wbB * gains[2], ccm, cfa, zoom
                         )
                         if (bitmap == null) {
                             Log.w(LOG_TAG, "GPU JPEG: pipeline returned null")
@@ -1482,6 +1523,11 @@ class MainActivity : AppCompatActivity() {
         var v = (normY - (1f - ay) / 2f) / ay
         u = u.coerceIn(0f, 1f)
         v = v.coerceIn(0f, 1f)
+
+        // 数码变焦：屏幕 UV → 裁切后的源图 UV（必须先于 mirror/rotate 逆变换）
+        val (cropU, cropV) = ZoomCrop.viewToSource(u, v, ZoomCrop.centered(currentZoomFactor()))
+        u = cropU
+        v = cropV
 
         // 直接应用顶点着色器的 forward 变换：screen → [mirror] → [rotate] → sensor
         // 着色器：uv = aTexCoord; if(mirror) uv.x = 1-uv.x; vUV = f(uv)

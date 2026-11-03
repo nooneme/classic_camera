@@ -28,7 +28,7 @@ Exposure, white balance, color temperature, tone curves, film simulation — eve
 
 ### 4. Multi-Lens Switching · Full Manual + Semi-Auto Exposure
 
-Automatically detects all **logical and physical lenses** that support RAW output and switches between them with one tap. Shutter / ISO are adjusted via a stepless (logarithmic) mapping, with **shutter-priority / ISO-priority semi-auto** modes to balance pro control with quick snapshots.
+Automatically detects all **logical and physical lenses** that support RAW output and switches between them with one tap. Shutter / ISO are adjusted via a stepless (logarithmic) mapping, with **shutter-priority / ISO-priority semi-auto** modes to balance pro control with quick snapshots. Tap the active lens again to toggle **2× digital zoom** (center crop; JPEG is saved at the cropped native resolution, while DNG keeps the full frame).
 
 ### 5. GPU Multi-Frame Denoising · Your Low-Light Ally
 

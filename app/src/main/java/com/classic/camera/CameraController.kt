@@ -70,7 +70,8 @@ class CameraController(
         whiteLevel: Float,
         wbR: Float, wbG: Float, wbB: Float,
         ccm: FloatArray,
-        cfaType: Int
+        cfaType: Int,
+        zoom: Float
     ) -> Bitmap?)? = null
 
     // 实时曝光参数回调（每帧预览时触发，用于状态栏显示实际 ISO/快门）
@@ -122,6 +123,11 @@ class CameraController(
 
     /** 设置开关：拍照时是否保存 DNG（由设置界面控制）。 */
     var saveDng: Boolean = true
+
+    /** 拍照瞬间是否开启 2× 数码变焦（由 MainActivity 在按快门前设置）。 */
+    @Volatile var digitalZoom2x: Boolean = false
+    /** 拍照瞬间的变焦倍率快照，保证整次拍照（含多帧）使用同一裁切。 */
+    private var captureSnapshotZoom: Float = 1f
 
     /** GPU 多帧融合处理器（MainActivity 注入）。必须设置，不再回退 CPU。 */
     var gpuMultiFrameProcessor: ((
@@ -654,6 +660,7 @@ class CameraController(
         captureSnapshotWhiteLevel = lastDynamicWhiteLevel
             ?: (lens.whiteLevel?.toFloat() ?: 1023f)
         captureSnapshotWB = lastWBGain.copyOf()
+        captureSnapshotZoom = if (digitalZoom2x) 2f else 1f
         // 拦截下一帧预览 Image（不再发新的 STILL_CAPTURE 请求，避免 AE 状态切换）
         captureLatch = CountDownLatch(1)
     }
@@ -672,6 +679,7 @@ class CameraController(
         captureSnapshotWhiteLevel = lastDynamicWhiteLevel
             ?: lens.whiteLevel.toFloat()
         captureSnapshotWB = lastWBGain.copyOf()
+        captureSnapshotZoom = if (digitalZoom2x) 2f else 1f
         multiFrameCapturing = true
         captureStartNs = System.nanoTime()
         firstFrameArrivedNs = 0L
@@ -709,6 +717,8 @@ class CameraController(
                     (tGpuDone - tAlignStart) / 1_000_000.0, merged.size))
 
                 val lens = currentLens
+                val zoom = captureSnapshotZoom
+                val zoomSuffix = if (zoom > 1.001f) "_2x" else ""
                 val bl = captureSnapshotBlackLevel ?: parseBlackLevel(lens?.blackLevelPattern ?: "") ?: floatArrayOf(0f, 0f, 0f)
                 val jpegWl = captureSnapshotWhiteLevel ?: (lens?.whiteLevel?.toFloat() ?: 1023f)
                 val wbGain = captureSnapshotWB ?: floatArrayOf(1f, 1f, 1f)
@@ -725,7 +735,7 @@ class CameraController(
                     val bitmap = processor(merged, w, h,
                         bl[0], bl[1], bl[2], jpegWl,
                         wbGain[0], wbGain[1], wbGain[2],
-                        ccm, cfa)
+                        ccm, cfa, zoom)
                     if (bitmap != null) {
                         val iso = lastRepeatingResult?.get(CaptureResult.SENSOR_SENSITIVITY)
                         val exposureNs = lastRepeatingResult?.get(CaptureResult.SENSOR_EXPOSURE_TIME)
@@ -734,11 +744,12 @@ class CameraController(
                         val equivFl = if (lens != null && lens.sensorWidthMm > 0f && lens.sensorHeightMm > 0f) {
                             val diag = sqrt((lens.sensorWidthMm * lens.sensorWidthMm + lens.sensorHeightMm * lens.sensorHeightMm).toDouble())
                             val cropFactor = 43.27 / diag
-                            (lens.focalLength * cropFactor).roundToInt()
+                            (lens.focalLength * cropFactor * zoom).roundToInt()
                         } else null
                         val (multiJpgName, multiUri) = saveBitmapAsJpeg(context, bitmap,
-                            "IMG_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())}.jpg",
-                            iso, exposureNs, aperture, actualFl, equivFl)
+                            "IMG_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())}${zoomSuffix}.jpg",
+                            iso, exposureNs, aperture, actualFl, equivFl,
+                            if (zoom > 1.001f) zoom.toDouble() else null)
                         jpgName = multiJpgName
                         if (multiUri != null) {
                             onPhotoSaved?.invoke(multiUri)
@@ -874,8 +885,10 @@ class CameraController(
         lens: LensInfo?,
         captureResult: TotalCaptureResult?
     ): String {
+        val zoom = captureSnapshotZoom
+        val zoomSuffix = if (zoom > 1.001f) "_2x" else ""
         val displayName = "IMG_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())}_" +
-            (lens?.focalLength?.let { "${it}mm" } ?: "") + ".jpg"
+            (lens?.focalLength?.let { "${it}mm" } ?: "") + zoomSuffix + ".jpg"
 
         val processor = gpuJpegProcessor
         if (processor == null) {
@@ -908,7 +921,7 @@ class CameraController(
             blackLevel[0], blackLevel[1], blackLevel[2],
             whiteLevel,
             wbGain[0], wbGain[1], wbGain[2],
-            ccm, cfaType
+            ccm, cfaType, zoom
         )
         if (bitmap == null) {
             Log.w(LOG_TAG, "GPU JPEG returned null, skipping JPEG")
@@ -926,10 +939,13 @@ class CameraController(
         val equivFl = if (lens != null && lens.sensorWidthMm > 0f && lens.sensorHeightMm > 0f) {
             val diag = sqrt((lens.sensorWidthMm * lens.sensorWidthMm + lens.sensorHeightMm * lens.sensorHeightMm).toDouble())
             val cropFactor = 43.27 / diag
-            (lens.focalLength * cropFactor).roundToInt()
+            (lens.focalLength * cropFactor * zoom).roundToInt()
         } else null
 
-        val (jpgName, uri) = saveBitmapAsJpeg(context, bitmap, displayName, iso, exposureTimeNs, aperture, actualFl, equivFl)
+        val (jpgName, uri) = saveBitmapAsJpeg(
+            context, bitmap, displayName, iso, exposureTimeNs, aperture, actualFl, equivFl,
+            if (zoom > 1.001f) zoom.toDouble() else null
+        )
         if (uri != null) {
             onPhotoSaved?.invoke(uri)
         }
