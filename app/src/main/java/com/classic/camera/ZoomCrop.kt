@@ -24,11 +24,16 @@ object ZoomCrop {
         return CropRect(origin, origin, size, size)
     }
 
-    /** 预览/屏幕归一化 UV → 裁切后源图 UV。 */
-    fun viewToSource(u: Float, v: Float, crop: CropRect): Pair<Float, Float> {
-        val su = ((u - crop.originU) / crop.sizeU).coerceIn(0f, 1f)
-        val sv = ((v - crop.originV) / crop.sizeV).coerceIn(0f, 1f)
-        return su to sv
+    /**
+     * 预览/屏幕归一化 UV → 全画幅显示 UV（裁切前的坐标）。
+     *
+     * 预览显示的是裁切区域，因此屏幕边缘 0/1 对应全画幅的 cropOrigin / cropOrigin+size。
+     * 之后再把该 UV 交给 mirror/orientation 的逆变换映射到传感器坐标。
+     */
+    fun viewToDisplay(u: Float, v: Float, crop: CropRect): Pair<Float, Float> {
+        val du = (crop.originU + u * crop.sizeU).coerceIn(0f, 1f)
+        val dv = (crop.originV + v * crop.sizeV).coerceIn(0f, 1f)
+        return du to dv
     }
 
     /** 显示方向整幅尺寸 → 裁切后的输出像素尺寸（按原分辨率裁切，不放大）。 */

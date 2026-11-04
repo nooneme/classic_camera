@@ -31,17 +31,17 @@ class ZoomCropTest {
     }
 
     @Test
-    fun viewToSource_maps_preview_edges_to_crop_edges() {
+    fun viewToDisplay_maps_preview_edges_to_crop_region() {
         val crop = ZoomCrop.centered(2f)
-        assertEquals(0f, ZoomCrop.viewToSource(0.25f, 0.25f, crop).first, 1e-6f)
-        assertEquals(0.5f, ZoomCrop.viewToSource(0.5f, 0.5f, crop).first, 1e-6f)
-        assertEquals(1f, ZoomCrop.viewToSource(0.75f, 0.75f, crop).second, 1e-6f)
+        assertEquals(0.25f, ZoomCrop.viewToDisplay(0f, 0f, crop).first, 1e-6f)
+        assertEquals(0.5f, ZoomCrop.viewToDisplay(0.5f, 0.5f, crop).first, 1e-6f)
+        assertEquals(0.75f, ZoomCrop.viewToDisplay(1f, 1f, crop).second, 1e-6f)
     }
 
     @Test
-    fun viewToSource_clamps_outside_crop() {
-        val crop = ZoomCrop.centered(2f)
-        assertEquals(0f, ZoomCrop.viewToSource(0f, 0f, crop).first, 1e-6f)
-        assertEquals(1f, ZoomCrop.viewToSource(1f, 1f, crop).second, 1e-6f)
+    fun viewToDisplay_1x_is_identity() {
+        val crop = ZoomCrop.centered(1f)
+        assertEquals(0.25f, ZoomCrop.viewToDisplay(0.25f, 0.25f, crop).first, 1e-6f)
+        assertEquals(0.75f, ZoomCrop.viewToDisplay(0.75f, 0.75f, crop).second, 1e-6f)
     }
 }

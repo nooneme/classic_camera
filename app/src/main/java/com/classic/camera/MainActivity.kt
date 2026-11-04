@@ -1524,10 +1524,10 @@ class MainActivity : AppCompatActivity() {
         u = u.coerceIn(0f, 1f)
         v = v.coerceIn(0f, 1f)
 
-        // 数码变焦：屏幕 UV → 裁切后的源图 UV（必须先于 mirror/rotate 逆变换）
-        val (cropU, cropV) = ZoomCrop.viewToSource(u, v, ZoomCrop.centered(currentZoomFactor()))
-        u = cropU
-        v = cropV
+        // 数码变焦：屏幕 UV → 全画幅显示 UV（裁切前的坐标），再交给 mirror/rotate 逆变换
+        val (displayU, displayV) = ZoomCrop.viewToDisplay(u, v, ZoomCrop.centered(currentZoomFactor()))
+        u = displayU
+        v = displayV
 
         // 直接应用顶点着色器的 forward 变换：screen → [mirror] → [rotate] → sensor
         // 着色器：uv = aTexCoord; if(mirror) uv.x = 1-uv.x; vUV = f(uv)
