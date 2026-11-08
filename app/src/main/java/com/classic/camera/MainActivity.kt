@@ -360,7 +360,16 @@ class MainActivity : AppCompatActivity() {
         StartupTrace.mark("setRenderer done")
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
         val focusIndicator = findViewById<View>(R.id.focusIndicator)
+        // OPPO 系 HAL 收到 AF/AE regions 或 trigger 请求后会切换 RAW_SENSOR 输出路径，
+        // 提前对 RAW 应用镜头阴影与通道校正；本应用自己从 Bayer 跑完整 ISP，会重复校正，
+        // 表现为四周过亮、超广角偏绿，且状态持续到会话重建。这些机型禁用点按测光区域，
+        // 改由 HAL 自带的连续 AF 自动对焦；其它机型保留完整的点按对焦功能。
+        val tapFocusDisabled = Build.BRAND.equals("OPPO", ignoreCase = true) ||
+            Build.MANUFACTURER.equals("OPPO", ignoreCase = true) ||
+            Build.BRAND.equals("realme", ignoreCase = true) ||
+            Build.BRAND.equals("OnePlus", ignoreCase = true)
         glSurfaceView.setOnTouchListener { _, event ->
+            if (tapFocusDisabled) return@setOnTouchListener true
             if (event.action == android.view.MotionEvent.ACTION_UP) {
                 val vw = glSurfaceView.width
                 val vh = glSurfaceView.height

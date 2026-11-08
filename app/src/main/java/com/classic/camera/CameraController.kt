@@ -1099,29 +1099,16 @@ class CameraController(
     /**
      * 取消对焦锁定，恢复默认全局自动对焦/测光。
      * 适合在切换镜头、拍照完成、划出后台时调用。
+     *
+     * 不能在这里发送带 CONTROL_AF_TRIGGER / CONTROL_AE_PRECAPTURE_TRIGGER 的单帧
+     * capture 请求：部分厂商 HAL（实测 OPPO 多摄）会因此切换 RAW_SENSOR 的输出路径，
+     * 提前对 RAW 应用镜头阴影与通道校正。本应用自己从 Bayer 跑完整 ISP，会再校正一次，
+     * 造成四周过亮、超广角偏绿，且该状态持续到会话重建。
+     * 改为只重发一份不带 region / trigger 的干净 repeating 模板，解锁效果等效。
      */
-    /** 取消对焦锁定，恢复默认全局自动对焦/测光。 */
     fun resetFocus() {
         focusTriggerSeq++ // 作废所有 pending 聚焦操作
         onFocusReset?.invoke()
-        val s = session
-        val dev = cameraDevice
-        val reader = rawReader
-        if (s == null || dev == null || reader == null) return
-        try {
-            val unlockBuilder = dev.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-            unlockBuilder.addTarget(reader.surface)
-            unlockBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_CANCEL)
-            if (manualController?.isManualExposure != true) {
-                unlockBuilder.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
-                    CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_CANCEL)
-                unlockBuilder.set(CaptureRequest.CONTROL_AE_LOCK, false)
-            }
-            manualController?.applyTo(unlockBuilder)
-            s.capture(unlockBuilder.build(), null, bgHandler)
-        } catch (e: Exception) {
-            Log.e(LOG_TAG, "resetFocus unlock err", e)
-        }
         updateCaptureParams()
     }
 
