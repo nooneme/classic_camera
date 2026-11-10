@@ -265,16 +265,34 @@ class ApplyFilterActivity : AppCompatActivity() {
         progressBar.visibility = View.VISIBLE
 
         previewView.queueEvent {
-            val full = pipeline?.applyLutToBitmap(bmp, lut, intensity)
+            // 大图（如 6144x8192）渲染时仍可能内存不足，必须在这里兜住，
+            // 否则异常会冒到 GLThread 顶层直接杀掉进程（表现为"点保存毫无反应"）。
+            var full: Bitmap? = null
+            var error: String? = null
+            try {
+                full = pipeline?.applyLutToBitmap(bmp, lut, intensity)
+            } catch (t: Throwable) {
+                error = t.message ?: t.javaClass.simpleName
+                Log.e(TAG, "applyLutToBitmap failed", t)
+            }
             mainHandler.post {
                 progressBar.visibility = View.GONE
                 if (full != null) {
                     resultBitmap = full
                     val name = "filter_${System.currentTimeMillis()}.jpg"
-                    val (_, savedUri) = saveBitmapAsJpeg(this, full, name)
-                    Toast.makeText(this, "已保存到 DCIM/Camera/", Toast.LENGTH_SHORT).show()
+                    val (_, savedUri) = saveBitmapAsJpeg(this@ApplyFilterActivity, full, name)
+                    if (savedUri != null) {
+                        Toast.makeText(this, "已保存到 DCIM/Camera/", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Log.e(TAG, "saveBitmapAsJpeg returned null uri for $name")
+                        Toast.makeText(this, "保存失败：写入相册出错", Toast.LENGTH_LONG).show()
+                    }
+                    // 全分辨率位图很占内存（50MP 约 190MB），保存完即可释放
+                    if (resultBitmap === full) resultBitmap = null
+                    full.recycle()
                 } else {
-                    Toast.makeText(this, "滤镜渲染失败", Toast.LENGTH_SHORT).show()
+                    Log.e(TAG, "render failed: $error")
+                    Toast.makeText(this, "保存失败：$error", Toast.LENGTH_LONG).show()
                 }
                 updateSaveEnabled()
             }

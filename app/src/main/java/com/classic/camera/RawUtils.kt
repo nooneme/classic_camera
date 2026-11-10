@@ -188,7 +188,11 @@ fun saveBitmapAsJpeg(
             (tDone - tExifDone) / 1_000_000.0,
             (tDone - tStart) / 1_000_000.0))
     } catch (e: Exception) {
-        // ignore
+        // 写入失败必须让调用方知道：以前这里静默吞掉并返回非空 uri，
+        // 界面会假报"已保存"，相册里却什么都没有。
+        Log.e("ClassicCamera", "saveBitmapAsJpeg failed: $displayName", e)
+        try { resolver.delete(uri, null, null) } catch (_: Exception) {}
+        return Pair(displayName, null)
     }
     return Pair(displayName, uri)
 }

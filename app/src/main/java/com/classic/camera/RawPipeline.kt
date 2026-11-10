@@ -22,6 +22,9 @@ class RawPipeline : GLSurfaceView.Renderer {
         private const val GL_R8 = 0x8229
         private const val RCD_WG = 16
         private const val SHADER_STORAGE_BARRIER = 0x00000002
+
+        /** 静态图套滤镜时的分块边长：限制单次回读的直连内存，避免大图 OOM。 */
+        private const val LUT_TILE_SIZE = 1024
     }
 
 
@@ -1928,7 +1931,10 @@ class RawPipeline : GLSurfaceView.Renderer {
 
         val maxInt = IntArray(1)
         GLES30.glGetIntegerv(GLES30.GL_MAX_TEXTURE_SIZE, maxInt, 0)
-        val tile = if (maxTexOverride > 0) maxTexOverride else (if (maxInt[0] > 0) maxInt[0] else 4096)
+        val maxTex = if (maxInt[0] > 0) maxInt[0] else 4096
+        // 固定小块处理：若用 MAX_TEXTURE_SIZE，一张 6144x8192 的照片会成为单个 tile，
+        // 单次 readPixels 就需要 192MB 直连内存 + 192MB IntArray，必然 OOM。
+        val tile = if (maxTexOverride > 0) maxTexOverride else minOf(LUT_TILE_SIZE, maxTex)
 
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val inputTex = IntArray(1)
@@ -1939,6 +1945,11 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+
+        // tile 级缓冲只分配一次并循环复用，峰值内存与整图尺寸无关（约 8MB）
+        val tilePixels = IntArray(tile * tile)
+        val readBuf = ByteBuffer.allocateDirect(tile * tile * 4).order(ByteOrder.nativeOrder())
+        val readInts = readBuf.asIntBuffer()
 
         try {
             for (ty in 0 until h step tile) {
@@ -1972,21 +1983,18 @@ class RawPipeline : GLSurfaceView.Renderer {
                     GLES30.glUniform1f(uniPost.uSaturation, 1f)
                     drawQuadRaw(uniPost.aPos, uniPost.aTexCoord)
 
-                    val pix = IntArray(tw * th)
-                    val buf = ByteBuffer.allocateDirect(tw * th * 4).order(ByteOrder.nativeOrder())
-                    GLES30.glReadPixels(0, 0, tw, th, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buf)
-                    buf.position(0)
-                    for (sy in 0 until th) {
-                        val base = sy * tw
-                        for (sx in 0 until tw) {
-                            val r = buf.get().toInt() and 0xFF
-                            val g = buf.get().toInt() and 0xFF
-                            val b = buf.get().toInt() and 0xFF
-                            val a = buf.get().toInt() and 0xFF
-                            pix[base + sx] = (a shl 24) or (r shl 16) or (g shl 8) or b
-                        }
+                    // 复用缓冲读回（一次读成 int，避免逐字节 4 次 get 的开销）
+                    readBuf.clear()
+                    GLES30.glReadPixels(0, 0, tw, th, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, readBuf)
+                    readInts.clear()
+                    readInts.get(tilePixels, 0, tw * th)
+                    // 小端序直连内存读出的 int 为 ABGR（R 在低字节），交换 R/B 得 ARGB
+                    for (i in 0 until tw * th) {
+                        val v = tilePixels[i]
+                        tilePixels[i] = (v and -0x1000000) or ((v and 0x000000FF) shl 16) or
+                            (v and 0x0000FF00) or ((v ushr 16) and 0x000000FF)
                     }
-                    out.setPixels(pix, 0, tw, tx, ty, tw, th)
+                    out.setPixels(tilePixels, 0, tw, tx, ty, tw, th)
 
                     if (tileBmp !== input) tileBmp.recycle()
                 }
