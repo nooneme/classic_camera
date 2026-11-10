@@ -246,6 +246,7 @@ class MainActivity : AppCompatActivity() {
             pipeline?.blackPoint = it.getFloat("black_point", 0f)
             pipeline?.shadowComp = it.getFloat("shadow_comp", 50f)
             pipeline?.contrast = it.getFloat("contrast", 0f)
+            pipeline?.saturation = 1f + it.getFloat("saturation", 50f) / 100f
             pipeline?.autoContrast = it.getBoolean("auto_contrast", true)
             colorTempKelvin = it.getInt("color_temp_kelvin", 6500)
             colorTint = it.getInt("color_tint", 0)
@@ -670,6 +671,8 @@ class MainActivity : AppCompatActivity() {
                         glSurfaceView.queueEvent { pipeline?.shadowComp = value }
                     "contrast" ->
                         glSurfaceView.queueEvent { pipeline?.contrast = value }
+                    "saturation" ->
+                        glSurfaceView.queueEvent { pipeline?.saturation = 1f + value / 100f }
                     "lut_intensity" ->
                         glSurfaceView.queueEvent { pipeline?.lutIntensity = value }
                     "color_temp" -> { colorTempKelvin = value.toInt(); updateColorTempGains() }
@@ -695,6 +698,8 @@ class MainActivity : AppCompatActivity() {
                         prefs.edit().putFloat("shadow_comp", value).apply()
                     "contrast" ->
                         prefs.edit().putFloat("contrast", value).apply()
+                    "saturation" ->
+                        prefs.edit().putFloat("saturation", value).apply()
                     "lut_intensity" ->
                         prefs.edit().putFloat("lut_intensity", value).apply()
                     "color_temp" -> {
@@ -807,6 +812,11 @@ class MainActivity : AppCompatActivity() {
                 valueToSlider = { it + 100f }, sliderToValue = { it - 100f },
                 formatValue = { it.toInt().toString() },
                 value = prefs.getFloat("contrast", 0f)))
+            add(SettingsItem("saturation", SettingsViewType.SLIDER, "饱和度",
+                sliderMax = 300f, sliderStep = 1f,
+                valueToSlider = { it + 100f }, sliderToValue = { it - 100f },
+                formatValue = { v -> val o = v.toInt(); if (o >= 0) "+$o" else "$o" },
+                value = prefs.getFloat("saturation", 50f)))
             // 自适应对比度开关
             add(SettingsItem("auto_contrast", SettingsViewType.SWITCH, "自适应对比度",
                 prefsKey = "auto_contrast", switchDefault = true,
@@ -859,6 +869,7 @@ class MainActivity : AppCompatActivity() {
             "black_point" to SettingsItem("black_point", SettingsViewType.SLIDER, "", value = 0f),
             "shadow_comp" to SettingsItem("shadow_comp", SettingsViewType.SLIDER, "", value = 50f),
             "contrast" to SettingsItem("contrast", SettingsViewType.SLIDER, "", value = 0f),
+            "saturation" to SettingsItem("saturation", SettingsViewType.SLIDER, "", value = 50f),
             "auto_contrast" to SettingsItem("auto_contrast", SettingsViewType.SWITCH, "", boolValue = true),
             "lut_intensity" to SettingsItem("lut_intensity", SettingsViewType.SLIDER, "", value = 1f),
             "color_temp" to SettingsItem("color_temp", SettingsViewType.SLIDER, "", value = 6500f),
@@ -886,6 +897,7 @@ class MainActivity : AppCompatActivity() {
             .putFloat("black_point", 0f)
             .putFloat("shadow_comp", 50f)
             .putFloat("contrast", 0f)
+            .putFloat("saturation", 50f)
             .putFloat("lut_intensity", 1f)
             .putInt("color_temp_kelvin", 6500)
             .putInt("color_tint", 0)
@@ -907,6 +919,7 @@ class MainActivity : AppCompatActivity() {
             pipeline?.blackPoint = 0f
             pipeline?.shadowComp = 50f
             pipeline?.contrast = 0f
+            pipeline?.saturation = 1.5f
             pipeline?.autoContrast = true
             pipeline?.lutIntensity = 1f
             pipeline?.highlightReconstructionEnabled = false

@@ -155,6 +155,11 @@ class RawPipeline : GLSurfaceView.Renderer {
     private var lutTextureId = 0
     private var lutEnabled = false
     @Volatile var lutIntensity: Float = 1f
+    /**
+     * 显示域饱和度增益（在 Gamma + LUT 之后按亮度保真混合）：1.0 = 不变。
+     * 仅对拍摄管线生效；静态图套滤镜路径固定为 1.0。
+     */
+    @Volatile var saturation: Float = 1f
     /** P3 首帧门控：true 时 onDrawFrame 提前返回（保持黑屏），等待启动期 LUT 异步恢复完成。 */
     @Volatile var lutRestorePending = false
 
@@ -405,6 +410,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         var aPos = 0; var aTexCoord = 0
         var uInputTex = 0
         var uLutTex = 0; var uLutSizeLoc = 0; var uEnableLut = 0; var uLutIntensity = 0
+        var uSaturation = 0
         var uAspectScale = 0; var uOrientation = 0; var uMirror = 0
         var uCropOrigin = 0; var uCropSize = 0
 
@@ -416,6 +422,7 @@ class RawPipeline : GLSurfaceView.Renderer {
             uLutSizeLoc = GLES30.glGetUniformLocation(id, "uLutSize")
             uEnableLut = GLES30.glGetUniformLocation(id, "uEnableLut")
             uLutIntensity = GLES30.glGetUniformLocation(id, "uLutIntensity")
+            uSaturation = GLES30.glGetUniformLocation(id, "uSaturation")
             uAspectScale = GLES30.glGetUniformLocation(id, "uAspectScale")
             uOrientation = GLES30.glGetUniformLocation(id, "uOrientation")
             uMirror = GLES30.glGetUniformLocation(id, "uMirror")
@@ -1306,6 +1313,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1f(uniPost.uLutSizeLoc, lutSize.toFloat())
         GLES30.glUniform1i(uniPost.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
         GLES30.glUniform1f(uniPost.uLutIntensity, lutIntensity)
+        GLES30.glUniform1f(uniPost.uSaturation, saturation)
 
         drawQuadRaw(uniPost.aPos, uniPost.aTexCoord)
 
@@ -1851,6 +1859,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1f(uniPost.uLutSizeLoc, lutSize.toFloat())
         GLES30.glUniform1i(uniPost.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
         GLES30.glUniform1f(uniPost.uLutIntensity, lutIntensity)
+        GLES30.glUniform1f(uniPost.uSaturation, saturation)
         drawQuadRaw(uniPost.aPos, uniPost.aTexCoord)
 
         return readCaptureBitmap(outW, outH)
@@ -1960,6 +1969,7 @@ class RawPipeline : GLSurfaceView.Renderer {
                     GLES30.glUniform1f(uniPost.uLutSizeLoc, lutSize.toFloat())
                     GLES30.glUniform1i(uniPost.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
                     GLES30.glUniform1f(uniPost.uLutIntensity, intensity)
+                    GLES30.glUniform1f(uniPost.uSaturation, 1f)
                     drawQuadRaw(uniPost.aPos, uniPost.aTexCoord)
 
                     val pix = IntArray(tw * th)
@@ -2049,6 +2059,7 @@ class RawPipeline : GLSurfaceView.Renderer {
         GLES30.glUniform1f(uniPost.uLutSizeLoc, lutSize.toFloat())
         GLES30.glUniform1i(uniPost.uEnableLut, if (lutEnabled && lutFloatArray != null) 1 else 0)
         GLES30.glUniform1f(uniPost.uLutIntensity, intensity)
+        GLES30.glUniform1f(uniPost.uSaturation, 1f)
         drawQuadRawFlipped(uniPost.aPos, uniPost.aTexCoord)
 
         GLES30.glDeleteTextures(1, inputTex, 0)
@@ -2645,6 +2656,7 @@ uniform highp sampler3D uLutTexture;
 uniform float uLutSize;
 uniform bool uEnableLut;
 uniform float uLutIntensity;
+uniform float uSaturation;
 in vec2 vUV;
 out vec4 frag;
 
@@ -2657,6 +2669,9 @@ out vec4 frag;
 void main() {
     vec3 rgb = texture(uInputTex, vUV).rgb;
     if (uEnableLut) rgb = applyLUT(rgb);
+    // 显示域饱和度：绕 Rec.709 亮度轴缩放色度，亮度保持不变，避免整体明暗漂移
+    float luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    rgb = clamp(mix(vec3(luma), rgb, uSaturation), 0.0, 1.0);
     frag = vec4(rgb, 1.0);
 }
 """.trimIndent()

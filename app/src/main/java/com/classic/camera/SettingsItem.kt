@@ -55,7 +55,7 @@ data class SettingsItem(
 val DEFAULT_SETTINGS_ORDER = listOf(
     "theme", "save_dng", "multi_frame", "highlight_reconstruction",
     "white_level_offset", "tone_map_d", "exposure_comp", "hl_comp", "hl_threshold",
-    "black_point", "shadow_comp", "contrast", "auto_contrast",
+    "black_point", "shadow_comp", "contrast", "saturation", "auto_contrast",
     "curve", "lut_intensity", "color_temp", "color_tint"
 )
 
