@@ -38,11 +38,16 @@ import kotlin.math.sqrt
 /**
  * 一个镜头的预览 + RAW 拍照 + DNG 保存 的生命周期封装。
  *
- * - open(lens, previewSurface)：打开相机，建双输出 session（预览 + RAW），开始重复预览。
- * - capture(callback)：发一次静态拍照，等 Image + CaptureResult 齐备后用 DngCreator 写 .dng。
+ * - open(lens)：打开相机，建单输出（RAW_SENSOR）session，开始重复预览。
+ * - capture(callback)：拦截下一帧预览 Image，用 DngCreator 写 .dng，并 GPU 渲染 JPEG。
  * - close()：释放相机/会话/ImageReader。
  *
- * 多摄：预览和 RAW 两个 OutputConfiguration 都 setPhysicalCameraId 锁定到目标物理镜头。
+ * 多摄打开策略（由 open() 决策，startSession() 按实际打开的 camera id 配流）：
+ * - 物理镜头 ID 若出现在 cameraManager.cameraIdList 里，说明厂商把它暴露成可独立
+ *   打开的相机（实测 OPPO 长焦），此时直接 openCamera(物理 ID)，RAW 流属于该设备
+ *   本身，不能再 setPhysicalCameraId。
+ * - 否则维持标准 multi-camera 路径：openCamera(逻辑 ID) +
+ *   OutputConfiguration.setPhysicalCameraId(物理 ID) 锁定 RAW 流。
  */
 class CameraController(
     private val context: Context,
@@ -174,8 +179,29 @@ class CameraController(
         lastWbPersistNs = 0L
         LensStore.loadWbGains(context, LensStore.lensId(lens))?.let { lastWBGain = it }
 
+        // OPPO 等厂商不允许「逻辑相机 0 + setPhysicalCameraId(4/5)」输出长焦 RAW：
+        // 镜头能被探测到、session 也能建好，但始终不出帧。若物理 ID 本身就在
+        // cameraIdList 中（可作为独立相机打开），绕开逻辑相机直接 openCamera(物理 ID)；
+        // 否则维持原逻辑：openCamera(逻辑 ID) + setPhysicalCameraId(物理 ID)。
+        val physicalId = lens.physicalCameraId
+        val directPhysical = physicalId != null && runCatching {
+            cameraManager.cameraIdList.any { it == physicalId }
+        }.getOrDefault(false)
+        val openId = physicalId?.takeIf { directPhysical } ?: lens.logicalCameraId
+        Log.i(LOG_TAG, "open lens=${LensStore.lensId(lens)} openId=$openId " +
+                "directPhysical=$directPhysical logical=${lens.logicalCameraId} physical=$physicalId")
+
+        openCameraDevice(openId, lens, mySeq, allowFallback = directPhysical)
+    }
+
+    /**
+     * 以 [cameraId] 打开设备。[allowFallback] 为 true 时，若「直接打开物理相机」失败
+     * （同步异常或 onError），自动回退到「逻辑相机 + setPhysicalCameraId」，只重试一次，
+     * 避免少数设备虽上报该 ID 却不允许独立打开时彻底黑屏。
+     */
+    private fun openCameraDevice(cameraId: String, lens: LensInfo, mySeq: Int, allowFallback: Boolean) {
         try {
-            cameraManager.openCamera(lens.logicalCameraId, object : CameraDevice.StateCallback() {
+            cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
                     StartupTrace.mark("CameraController.onOpened")
                     if (mySeq != openSeq) { camera.close(); return } // 被新一轮取代
@@ -186,13 +212,27 @@ class CameraController(
                     camera.close(); if (cameraDevice === camera) cameraDevice = null
                 }
                 override fun onError(camera: CameraDevice, error: Int) {
-                    Log.e(LOG_TAG, "openCamera error=$error")
+                    Log.e(LOG_TAG, "openCamera error=$error id=$cameraId")
                     camera.close(); if (cameraDevice === camera) cameraDevice = null
+                    if (allowFallback && mySeq == openSeq && currentLens == lens) {
+                        retryWithLogicalCamera(cameraId, lens, mySeq)
+                    }
                 }
             }, bgHandler)
         } catch (e: Exception) {
-            Log.e(LOG_TAG, "openCamera err", e)
+            Log.e(LOG_TAG, "openCamera err id=$cameraId", e)
+            if (allowFallback && mySeq == openSeq && currentLens == lens) {
+                retryWithLogicalCamera(cameraId, lens, mySeq)
+            }
         }
+    }
+
+    /** 直接打开物理相机失败后的兜底路径。 */
+    private fun retryWithLogicalCamera(failedId: String, lens: LensInfo, mySeq: Int) {
+        val logicalId = lens.logicalCameraId
+        if (logicalId == failedId) return
+        Log.w(LOG_TAG, "direct physical open ($failedId) failed, fallback to logical $logicalId")
+        openCameraDevice(logicalId, lens, mySeq, allowFallback = false)
     }
     @Volatile private var openSeq = 0
     @Volatile private var firstFrameDelivered = false
@@ -218,10 +258,21 @@ class CameraController(
     }
 
     private fun startSession(camera: CameraDevice, lens: LensInfo) {
-        // 物理镜头的 RAW 尺寸用物理镜头 characteristics 取
-        val charIdForRaw = lens.physicalCameraId ?: lens.logicalCameraId
+        // 依据实际打开的设备选流配置方式：
+        // - 直接打开的就是物理相机（camera.id == physicalId）：RAW 流属于该设备本身，
+        //   characteristics 用 camera.id，且不能再 setPhysicalCameraId（那是给逻辑
+        //   相机会话用的，设了反而会让厂商 HAL 不出帧）。
+        // - 打开的是逻辑相机：仍按物理镜头取 RAW 尺寸/元数据，并在流上锁定物理 ID。
+        val physicalId = lens.physicalCameraId
+        val directPhysical = physicalId != null && camera.id == physicalId
+        // 非空 = 打开的是逻辑相机，需要把 RAW 流锁定到物理子镜头；
+        // 为 null = 独立镜头或已直开的物理相机，走普通 session。
+        val physicalLockId = physicalId?.takeIf { !directPhysical }
+        val charIdForRaw = if (directPhysical) camera.id else (physicalLockId ?: lens.logicalCameraId)
         val characteristics = cameraManager.getCameraCharacteristics(charIdForRaw)
         captureCharacteristics = characteristics
+        Log.i(LOG_TAG, "startSession camera.id=${camera.id} charId=$charIdForRaw " +
+                "directPhysical=$directPhysical physicalLockId=$physicalLockId")
         val configMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
         val rawSizes = configMap?.getOutputSizes(ImageFormat.RAW_SENSOR)
         if (rawSizes.isNullOrEmpty()) {
@@ -299,7 +350,8 @@ class CameraController(
                 startRawRepeating(s)
             }
             override fun onConfigureFailed(s: CameraCaptureSession) {
-                Log.e(LOG_TAG, "session config failed")
+                Log.e(LOG_TAG, "session config failed, camera.id=${camera.id} " +
+                        "directPhysical=$directPhysical physicalLockId=$physicalLockId")
             }
         }
 
@@ -307,9 +359,10 @@ class CameraController(
         // 避免在 onOpened 回调里向上抛导致 FATAL。
         if (lens != currentLens) { camera.close(); return }
         try {
-            if (Build.VERSION.SDK_INT >= 28 && lens.physicalCameraId != null) {
+            if (Build.VERSION.SDK_INT >= 28 && physicalLockId != null) {
+                // 标准 multi-camera 路径：逻辑相机 + 把 RAW 流锁定到物理子镜头。
                 val rawConfig = OutputConfiguration(rawSurface)
-                rawConfig.setPhysicalCameraId(lens.physicalCameraId)
+                rawConfig.setPhysicalCameraId(physicalLockId)
                 val executor = Executor { r -> bgHandler.post(r) }
                 val sessionConfig = SessionConfiguration(
                     SessionConfiguration.SESSION_REGULAR,
@@ -319,6 +372,9 @@ class CameraController(
                 )
                 camera.createCaptureSession(sessionConfig)
             } else {
+                // 独立镜头，或已直接打开的物理相机：流天然属于该设备，
+                // 不能再 setPhysicalCameraId（OPPO 长焦在此路径下才出 RAW 帧）。
+                Log.i(LOG_TAG, "createCaptureSession: plain RAW stream on ${camera.id}")
                 camera.createCaptureSession(listOf(rawSurface), stateCb, bgHandler)
             }
         } catch (e: Exception) {
@@ -815,7 +871,7 @@ class CameraController(
 
     /**
      * 通过 MediaStore 写入系统相机目录 DCIM/Camera/，可在文件管理器/相册直接看到。
-     * 返回文件显示名（供 Toast）。
+     * 返回文件显示名（供上层完成回调使用）。
      */
     private fun writeDng(
         characteristics: CameraCharacteristics,

@@ -469,26 +469,12 @@ class MainActivity : AppCompatActivity() {
                     cameraController?.deviceOrientation = deviceOrientation
                     cameraController?.digitalZoom2x = zoom2xEnabled
 
+                    // 回调必须保留非空：CameraController 用它作为出片门控（为 null 会跳过保存）。
+                    // 拍摄成功不再弹 Toast，反馈交给底部「最后一张照片」缩略图按钮。
                     if (useMulti) {
-                        cameraController?.startMultiCapture { dngName, jpgName ->
-                            runOnUiThread {
-                                val msg = if (dngName.isNotEmpty())
-                                    "多帧合成: $dngName 和 $jpgName → DCIM/Camera/"
-                                else
-                                    "多帧合成: $jpgName → DCIM/Camera/"
-                                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
-                            }
-                        }
+                        cameraController?.startMultiCapture { _, _ -> }
                     } else {
-                        cameraController?.capture { dngName, jpgName, _ ->
-                            runOnUiThread {
-                                val msg = if (dngName.isNotEmpty())
-                                    "$dngName 和 $jpgName → DCIM/Camera/"
-                                else
-                                    "$jpgName → DCIM/Camera/"
-                                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
-                            }
-                        }
+                        cameraController?.capture { _, _, _ -> }
                     }
                 }
             }
