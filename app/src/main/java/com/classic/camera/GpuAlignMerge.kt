@@ -20,6 +20,8 @@ class GpuAlignMerge {
         private const val GL_RED_INTEGER = 0x8D94
         private const val T_SIZE_2 = 16
         private const val MAX_FRAMES = 8
+        // 金字塔层数：L0=2x, L1=4x, L2=8x, L3=16x, L4=32x（相对全分辨率）
+        private const val NUM_LEVELS = 5
         private const val SBO_WEIGHT_BINDING = 5
     }
 
@@ -27,7 +29,7 @@ class GpuAlignMerge {
     private var supported = false
 
     private var progCSBoxDown2 = 0
-    private var progCSGaussDown4 = 0
+    private var progCSGaussDown2 = 0
     private var progAlign = 0
     private var progWeights = 0
     private var progMerge = 0
@@ -36,14 +38,16 @@ class GpuAlignMerge {
     private var sensorWhiteLevel: Float = 65535.0f
 
     private val frameTex = IntArray(MAX_FRAMES)
-    private val pyrTex = IntArray(MAX_FRAMES * 3)
-    private val pyrTexW = IntArray(MAX_FRAMES * 3)
-    private val pyrTexH = IntArray(MAX_FRAMES * 3)
+    private val pyrTex = IntArray(MAX_FRAMES * NUM_LEVELS)
+    private val pyrTexW = IntArray(MAX_FRAMES * NUM_LEVELS)
+    private val pyrTexH = IntArray(MAX_FRAMES * NUM_LEVELS)
     private var fbo = 0
     private var weightSSBO = 0
     private var level0SSBO = 0
     private var level1SSBO = 0
     private var level2SSBO = 0
+    private var level3SSBO = 0
+    private var level4SSBO = 0
     private var zeroSSBO = 0
     private var outSSBO = 0
 
@@ -87,7 +91,7 @@ class GpuAlignMerge {
             progWeights = createComputeProgram(CS_WEIGHTS)
             progMerge = createComputeProgram(CS_MERGE)
             progCSBoxDown2 = createComputeProgram(CS_BOX_DOWN2)
-            progCSGaussDown4 = createComputeProgram(CS_GAUSS_DOWN4)
+            progCSGaussDown2 = createComputeProgram(CS_GAUSS_DOWN2)
             GLES30.glGenTextures(MAX_FRAMES, frameTex, 0)
             for (i in 0 until MAX_FRAMES) {
                 GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, frameTex[i])
@@ -96,7 +100,7 @@ class GpuAlignMerge {
                 GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
                 GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
             }
-            GLES30.glGenTextures(MAX_FRAMES * 3, pyrTex, 0)
+            GLES30.glGenTextures(MAX_FRAMES * NUM_LEVELS, pyrTex, 0)
             val fboArr = IntArray(1); GLES30.glGenFramebuffers(1, fboArr, 0); fbo = fboArr[0]
             val outBuf = IntArray(1)
             GLES30.glGenBuffers(1, outBuf, 0)
@@ -112,17 +116,19 @@ class GpuAlignMerge {
 
     fun releaseGL() {
         if (frameTex[0] != 0) { GLES30.glDeleteTextures(MAX_FRAMES, frameTex, 0); frameTex.fill(0) }
-        if (pyrTex[0] != 0) { GLES30.glDeleteTextures(MAX_FRAMES * 3, pyrTex, 0); pyrTex.fill(0) }
+        if (pyrTex[0] != 0) { GLES30.glDeleteTextures(MAX_FRAMES * NUM_LEVELS, pyrTex, 0); pyrTex.fill(0) }
         pyrTexW.fill(0); pyrTexH.fill(0)
         if (fbo != 0) { GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0); fbo = 0 }
         if (level0SSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(level0SSBO), 0); level0SSBO = 0 }
         if (level1SSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(level1SSBO), 0); level1SSBO = 0 }
         if (level2SSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(level2SSBO), 0); level2SSBO = 0 }
+        if (level3SSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(level3SSBO), 0); level3SSBO = 0 }
+        if (level4SSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(level4SSBO), 0); level4SSBO = 0 }
         if (zeroSSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(zeroSSBO), 0); zeroSSBO = 0 }
         if (outSSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(outSSBO), 0); outSSBO = 0 }
         if (weightSSBO != 0) { GLES31.glDeleteBuffers(1, intArrayOf(weightSSBO), 0); weightSSBO = 0 }
         if (progCSBoxDown2 != 0) { GLES30.glDeleteProgram(progCSBoxDown2); progCSBoxDown2 = 0 }
-        if (progCSGaussDown4 != 0) { GLES30.glDeleteProgram(progCSGaussDown4); progCSGaussDown4 = 0 }
+        if (progCSGaussDown2 != 0) { GLES30.glDeleteProgram(progCSGaussDown2); progCSGaussDown2 = 0 }
         if (progAlign != 0) { GLES31.glDeleteProgram(progAlign); progAlign = 0 }
         if (progWeights != 0) { GLES31.glDeleteProgram(progWeights); progWeights = 0 }
         if (progMerge != 0) { GLES30.glDeleteProgram(progMerge); progMerge = 0 }
@@ -213,73 +219,89 @@ class GpuAlignMerge {
     }
 
     private fun buildPyramids(w: Int, h: Int, nf: Int) {
-        val pyrW0 = (w + 1) / 2; val pyrH0 = (h + 1) / 2
-        val pyrW1 = (pyrW0 + 3) / 4; val pyrH1 = (pyrH0 + 3) / 4
-        val pyrW2 = (pyrW1 + 3) / 4; val pyrH2 = (pyrH1 + 3) / 4
-
-        for (f in 0 until nf) {
-            initTex(pyrTex[pt(f, 0)], pyrW0, pyrH0, pt(f, 0))
-            initTex(pyrTex[pt(f, 1)], pyrW1, pyrH1, pt(f, 1))
-            initTex(pyrTex[pt(f, 2)], pyrW2, pyrH2, pt(f, 2))
+        // 每级 2x 下采样：L0=2x, L1=4x, L2=8x, L3=16x, L4=32x（相对全分辨率）
+        val lw = IntArray(NUM_LEVELS)
+        val lh = IntArray(NUM_LEVELS)
+        lw[0] = (w + 1) / 2; lh[0] = (h + 1) / 2
+        for (l in 1 until NUM_LEVELS) {
+            lw[l] = (lw[l - 1] + 1) / 2
+            lh[l] = (lh[l - 1] + 1) / 2
         }
-        val ntx0 = (pyrW0 + 15) / 16; val nty0 = (pyrH0 + 15) / 16
-        val ntx1 = (pyrW1 + 15) / 16; val nty1 = (pyrH1 + 15) / 16
-        val ntx2 = (pyrW2 + 15) / 16; val nty2 = (pyrH2 + 15) / 16
-        for (f in 0 until nf) {
-            GLES31.glUseProgram(progCSBoxDown2)
 
+        for (f in 0 until nf) {
+            for (l in 0 until NUM_LEVELS) {
+                val idx = pt(f, l)
+                initTex(pyrTex[idx], lw[l], lh[l], idx)
+            }
+        }
+
+        val ntx = IntArray(NUM_LEVELS)
+        val nty = IntArray(NUM_LEVELS)
+        for (l in 0 until NUM_LEVELS) {
+            ntx[l] = (lw[l] + 15) / 16
+            nty[l] = (lh[l] + 15) / 16
+        }
+
+        val uBoxSrcLoc = GLES31.glGetUniformLocation(progCSBoxDown2, "uSrc")
+        val uBoxSizeLoc = GLES31.glGetUniformLocation(progCSBoxDown2, "uSrcSize")
+        val uBoxWlLoc = GLES31.glGetUniformLocation(progCSBoxDown2, "uWhiteLevel")
+        val uGaussSrcLoc = GLES31.glGetUniformLocation(progCSGaussDown2, "uSrc")
+        val uGaussSizeLoc = GLES31.glGetUniformLocation(progCSGaussDown2, "uSrcSize")
+
+        for (f in 0 until nf) {
+            // L0：全分辨率 RAW → 2x2 box
+            GLES31.glUseProgram(progCSBoxDown2)
             GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, frameTex[f])
-
-            GLES31.glUniform1i(GLES31.glGetUniformLocation(progCSBoxDown2, "uSrc"), 0)
-            GLES31.glUniform2i(GLES31.glGetUniformLocation(progCSBoxDown2, "uSrcSize"), w, h)
-            GLES31.glUniform1f(GLES31.glGetUniformLocation(progCSBoxDown2, "uWhiteLevel"), sensorWhiteLevel)
-
+            GLES31.glUniform1i(uBoxSrcLoc, 0)
+            GLES31.glUniform2i(uBoxSizeLoc, w, h)
+            GLES31.glUniform1f(uBoxWlLoc, sensorWhiteLevel)
             GLES31.glBindImageTexture(0, pyrTex[pt(f, 0)], 0, false, 0, GLES31.GL_WRITE_ONLY, GLES30.GL_RGBA8)
-
-            GLES31.glDispatchCompute(ntx0, nty0, 1)
-
+            GLES31.glDispatchCompute(ntx[0], nty[0], 1)
             GLES31.glMemoryBarrier(GLES31.GL_TEXTURE_FETCH_BARRIER_BIT or GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)
 
-            GLES31.glUseProgram(progCSGaussDown4)
-            GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pyrTex[pt(f, 0)])
-            GLES31.glUniform1i(GLES31.glGetUniformLocation(progCSGaussDown4, "uSrc"), 0)
-            GLES31.glUniform2i(GLES31.glGetUniformLocation(progCSGaussDown4, "uSrcSize"), pyrW0, pyrH0)
-            GLES31.glBindImageTexture(0, pyrTex[pt(f, 1)], 0, false, 0, GLES31.GL_WRITE_ONLY, GLES30.GL_RGBA8)
-            GLES31.glDispatchCompute(ntx1, nty1, 1)
-            GLES31.glMemoryBarrier(GLES31.GL_TEXTURE_FETCH_BARRIER_BIT or GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)
-
-            GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pyrTex[pt(f, 1)])
-            GLES31.glUniform2i(GLES31.glGetUniformLocation(progCSGaussDown4, "uSrcSize"), pyrW1, pyrH1)
-            GLES31.glBindImageTexture(0, pyrTex[pt(f, 2)], 0, false, 0, GLES31.GL_WRITE_ONLY, GLES30.GL_RGBA8)
-            GLES31.glDispatchCompute(ntx2, nty2, 1)
-            GLES31.glMemoryBarrier(GLES31.GL_TEXTURE_FETCH_BARRIER_BIT or GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)
+            // L1..L4：逐级 2x 高斯下采样
+            GLES31.glUseProgram(progCSGaussDown2)
+            GLES31.glUniform1i(uGaussSrcLoc, 0)
+            for (l in 1 until NUM_LEVELS) {
+                GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+                GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pyrTex[pt(f, l - 1)])
+                GLES31.glUniform2i(uGaussSizeLoc, lw[l - 1], lh[l - 1])
+                GLES31.glBindImageTexture(0, pyrTex[pt(f, l)], 0, false, 0, GLES31.GL_WRITE_ONLY, GLES30.GL_RGBA8)
+                GLES31.glDispatchCompute(ntx[l], nty[l], 1)
+                GLES31.glMemoryBarrier(GLES31.GL_TEXTURE_FETCH_BARRIER_BIT or GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)
+            }
         }
-
-
     }
 
     private fun alignAllFrames(w: Int, h: Int, nf: Int, numTx: Int, numTy: Int) {
-        val pyrW0 = (w + 1) / 2; val pyrH0 = (h + 1) / 2
-        val pyrW1 = (pyrW0 + 3) / 4; val pyrH1 = (pyrH0 + 3) / 4
-        val pyrW2 = (pyrW1 + 3) / 4; val pyrH2 = (pyrH1 + 3) / 4
+        val lw = IntArray(NUM_LEVELS)
+        val lh = IntArray(NUM_LEVELS)
+        lw[0] = (w + 1) / 2; lh[0] = (h + 1) / 2
+        for (l in 1 until NUM_LEVELS) {
+            lw[l] = (lw[l - 1] + 1) / 2
+            lh[l] = (lh[l - 1] + 1) / 2
+        }
 
-        val nt2x = (pyrW2 + T_SIZE_2 - 1) / T_SIZE_2
-        val nt2y = (pyrH2 + T_SIZE_2 - 1) / T_SIZE_2
-        val nt1x = (pyrW1 + T_SIZE_2 - 1) / T_SIZE_2
-        val nt1y = (pyrH1 + T_SIZE_2 - 1) / T_SIZE_2
-        val nt0x = numTx; val nt0y = numTy
+        val gx = IntArray(NUM_LEVELS)
+        val gy = IntArray(NUM_LEVELS)
+        for (l in 0 until NUM_LEVELS) {
+            gx[l] = (lw[l] + T_SIZE_2 - 1) / T_SIZE_2
+            gy[l] = (lh[l] + T_SIZE_2 - 1) / T_SIZE_2
+        }
+        // L0 由调用方按 32px 全分辨率 tile 给出，保持与 merge/weights 一致
+        gx[0] = numTx; gy[0] = numTy
 
-        ensureSSBO(::level0SSBO, (nf - 1) * nt0x * nt0y * 2 * 4)
-        ensureSSBO(::level1SSBO, nt1x * nt1y * 2 * 4)
-        ensureSSBO(::level2SSBO, nt2x * nt2y * 2 * 4)
+        ensureSSBO(::level0SSBO, (nf - 1) * gx[0] * gy[0] * 2 * 4)
+        ensureSSBO(::level1SSBO, gx[1] * gy[1] * 2 * 4)
+        ensureSSBO(::level2SSBO, gx[2] * gy[2] * 2 * 4)
+        ensureSSBO(::level3SSBO, gx[3] * gy[3] * 2 * 4)
+        ensureSSBO(::level4SSBO, gx[4] * gy[4] * 2 * 4)
 
         if (zeroSSBO == 0) {
             val ids = IntArray(1); GLES31.glGenBuffers(1, ids, 0); zeroSSBO = ids[0]
         }
-        val zeroSize = nt2x * nt2y * 2 * 4
+        val zeroSize = gx[NUM_LEVELS - 1] * gy[NUM_LEVELS - 1] * 2 * 4
         val zeroArr = ByteArray(zeroSize)
         val zeroBuf = ByteBuffer.allocateDirect(zeroSize).order(ByteOrder.nativeOrder()).put(zeroArr)
         zeroBuf.position(0)
@@ -291,65 +313,48 @@ class GpuAlignMerge {
         val uGridSizeLoc = GLES31.glGetUniformLocation(progAlign, "uGridSize")
         val uPrevGridLoc = GLES31.glGetUniformLocation(progAlign, "uPrevGrid")
         val uScaleLoc = GLES31.glGetUniformLocation(progAlign, "uScale")
+        val uTileStepLoc = GLES31.glGetUniformLocation(progAlign, "uTileStep")
         val uMinMaxLoc = GLES31.glGetUniformLocation(progAlign, "uMinMax")
         val uFrameBaseLoc = GLES31.glGetUniformLocation(progAlign, "uFrameBase")
 
-        // 每副帧独立做 3 层对齐
+        // 每层的搜索中心限幅（单位：该层像素）。L4 从零开始。
+        val minMax = arrayOf(
+            intArrayOf(-84, 63),  // L0: 2x
+            intArrayOf(-40, 30),  // L1: 4x
+            intArrayOf(-20, 15),  // L2: 8x
+            intArrayOf(-8, 8),    // L3: 16x
+            intArrayOf(0, 0),     // L4: 32x
+        )
+        val ssbo = intArrayOf(level0SSBO, level1SSBO, level2SSBO, level3SSBO, level4SSBO)
+
+        // 每副帧独立做 5 层对齐（L4 → L0）
         for (altF in 1 until nf) {
             GLES31.glUseProgram(progAlign)
+            for (l in NUM_LEVELS - 1 downTo 0) {
+                GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+                GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pyrTex[pt(0, l)])
+                GLES30.glUniform1i(uRefLoc, 0)
+                GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+                GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pyrTex[pt(altF, l)])
+                GLES30.glUniform1i(uAltLoc, 1)
 
-            // Layer 2 (coarsest)
-            GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pyrTex[pt(0, 2)])
-            GLES30.glUniform1i(uRefLoc, 0)
-            GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pyrTex[pt(altF, 2)])
-            GLES30.glUniform1i(uAltLoc, 1)
-            GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 2, zeroSSBO)
-            GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 3, level2SSBO)
-            GLES31.glUniform2i(uGridSizeLoc, nt2x, nt2y)
-            GLES31.glUniform2i(uPrevGridLoc, nt2x, nt2y)
-            GLES31.glUniform1i(uScaleLoc, 4)
-            GLES31.glUniform2i(uMinMaxLoc, 0, 0)
-            GLES31.glUniform1i(uFrameBaseLoc, 0)
-            GLES31.glDispatchCompute(nt2x, nt2y, 1)
-            GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+                // 最粗层用零缓冲作为 prev；其余层用上一层的偏移
+                val prevBuf = if (l == NUM_LEVELS - 1) zeroSSBO else ssbo[l + 1]
+                val prevGx = if (l == NUM_LEVELS - 1) gx[l] else gx[l + 1]
+                val prevGy = if (l == NUM_LEVELS - 1) gy[l] else gy[l + 1]
 
-            // Layer 1
-            GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pyrTex[pt(0, 1)])
-            GLES30.glUniform1i(uRefLoc, 0)
-            GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pyrTex[pt(altF, 1)])
-            GLES30.glUniform1i(uAltLoc, 1)
-            GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 2, level2SSBO)
-            GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 3, level1SSBO)
-            GLES31.glUniform2i(uGridSizeLoc, nt1x, nt1y)
-            GLES31.glUniform2i(uPrevGridLoc, nt2x, nt2y)
-            GLES31.glUniform1i(uScaleLoc, 4)
-            GLES31.glUniform2i(uMinMaxLoc, -20, 15)
-            GLES31.glUniform1i(uFrameBaseLoc, 0)
-            GLES31.glDispatchCompute(nt1x, nt1y, 1)
-            GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
-
-            // Layer 0 (finest)
-            GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pyrTex[pt(0, 0)])
-            GLES30.glUniform1i(uRefLoc, 0)
-            GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pyrTex[pt(altF, 0)])
-            GLES30.glUniform1i(uAltLoc, 1)
-            GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 2, level1SSBO)
-            GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 3, level0SSBO)
-            GLES31.glUniform2i(uGridSizeLoc, nt0x, nt0y)
-            GLES31.glUniform2i(uPrevGridLoc, nt1x, nt1y)
-            GLES31.glUniform1i(uScaleLoc, 4)
-            GLES31.glUniform2i(uMinMaxLoc, -84, 63)
-            GLES31.glUniform1i(uFrameBaseLoc, (altF - 1) * nt0x * nt0y * 2)
-            GLES31.glDispatchCompute(nt0x, nt0y, 1)
-            GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+                GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 2, prevBuf)
+                GLES30.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 3, ssbo[l])
+                GLES31.glUniform2i(uGridSizeLoc, gx[l], gy[l])
+                GLES31.glUniform2i(uPrevGridLoc, prevGx, prevGy)
+                GLES31.glUniform1i(uScaleLoc, 2)
+                GLES31.glUniform1i(uTileStepLoc, 2)
+                GLES31.glUniform2i(uMinMaxLoc, minMax[l][0], minMax[l][1])
+                GLES31.glUniform1i(uFrameBaseLoc, if (l == 0) (altF - 1) * gx[0] * gy[0] * 2 else 0)
+                GLES31.glDispatchCompute(gx[l], gy[l], 1)
+                GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT)
+            }
         }
-
     }
 
     private fun computeWeights(nf: Int, numTx: Int, numTy: Int) {
@@ -431,7 +436,7 @@ class GpuAlignMerge {
 
     // ===================== 工具 =====================
 
-    private fun pt(f: Int, l: Int) = f * 3 + l
+    private fun pt(f: Int, l: Int) = f * NUM_LEVELS + l
 
     private fun initTex(texId: Int, tw: Int, th: Int, idx: Int) {
         if (pyrTexW[idx] == tw && pyrTexH[idx] == th) return
@@ -499,7 +504,7 @@ class GpuAlignMerge {
         }
     """.trimIndent()
 
-    private val CS_GAUSS_DOWN4 = """
+    private val CS_GAUSS_DOWN2 = """
         #version 310 es
         precision highp sampler2D; precision highp image2D;
         layout(local_size_x=16,local_size_y=16) in;
@@ -507,7 +512,7 @@ class GpuAlignMerge {
         layout(rgba8,binding=0) writeonly uniform highp image2D uDst;
         void main() {
             ivec2 p = ivec2(gl_GlobalInvocationID.xy);
-            ivec2 cp = p * 4;
+            ivec2 cp = p * 2;
             if (cp.x >= uSrcSize.x || cp.y >= uSrcSize.y) { return; }
             const float k[5] = float[](1.0,4.0,6.0,4.0,1.0);
             float sum = 0.0; float tw = 0.0;
@@ -530,7 +535,7 @@ class GpuAlignMerge {
         layout(std430, binding = 2) buffer Prev { int prev[]; };
         layout(std430, binding = 3) buffer OutBuf { int outData[]; };
         uniform ivec2 uGridSize; uniform ivec2 uPrevGrid;
-        uniform int uScale; uniform ivec2 uMinMax;
+        uniform int uScale; uniform int uTileStep; uniform ivec2 uMinMax;
         uniform int uFrameBase;
 
         shared float sRef[256];
@@ -548,8 +553,8 @@ class GpuAlignMerge {
             sRef[tid] = texelFetch(uRef, ivec2(gx,gy), 0).r;
             memoryBarrierShared(); barrier();
 
-            int pt = clamp(int(tx)/4, 0, uPrevGrid.x-1);
-            int pp = clamp(int(ty)/4, 0, uPrevGrid.y-1);
+            int pt = clamp(int(tx)/uTileStep, 0, uPrevGrid.x-1);
+            int pp = clamp(int(ty)/uTileStep, 0, uPrevGrid.y-1);
             int bi = (pp*uPrevGrid.x+pt)*2;
             int bx = int(clamp(float(prev[bi]*uScale), float(uMinMax.x), float(uMinMax.y)));
             int by = int(clamp(float(prev[bi+1]*uScale), float(uMinMax.x), float(uMinMax.y)));
