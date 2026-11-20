@@ -617,6 +617,21 @@ class MainActivity : AppCompatActivity() {
     /** SharedPreferences 文件名 */
     private val PREFS_NAME = "camera_settings"
 
+    /** 多帧合成帧数的默认值与合法范围（与 SettingsAdapter 的滑块 2..8 保持一致） */
+    private val DEFAULT_MULTI_FRAME_COUNT = 4
+    private val MULTI_FRAME_MIN = 2
+    private val MULTI_FRAME_MAX = 8
+
+    /**
+     * 读取已持久化的多帧帧数。
+     * 历史版本在关闭开关时会把 1 写进 "multi_frame_count"，此处对非法值回退到默认值 4，
+     * 而不是用 coerceIn 静默抬成最小值 2（那会让用户原设置永久丢失）。
+     */
+    private fun loadMultiFrameCount(prefs: SharedPreferences): Int {
+        val stored = prefs.getInt("multi_frame_count", DEFAULT_MULTI_FRAME_COUNT)
+        return if (stored in MULTI_FRAME_MIN..MULTI_FRAME_MAX) stored else DEFAULT_MULTI_FRAME_COUNT
+    }
+
     private fun updateColorTempGains() {
         colorTempGains = kelvinToWbGains(colorTempKelvin, colorTint)
     }
@@ -645,11 +660,18 @@ class MainActivity : AppCompatActivity() {
                         prefs.edit().putBoolean("auto_contrast", checked).apply()
                         glSurfaceView.queueEvent { pipeline?.autoContrast = checked }
                     }
-                    "multi_frame" -> {
-                        val n = if (checked) item.value.toInt().coerceIn(2, 8) else 1
-                        prefs.edit().putBoolean("multi_frame", checked).putInt("multi_frame_count", n).apply()
-                        cameraController?.multiFrameCount = n
-                    }
+                    "multi_frame" ->
+                        // 开启：从 prefs 取最近一次持久化的帧数并做范围校验；
+                        // 关闭：仅关闭开关，绝不回写帧数，避免用户已存设置被 1 覆盖后丢失。
+                        if (checked) {
+                            val n = loadMultiFrameCount(prefs)
+                            item.value = n.toFloat()
+                            prefs.edit().putBoolean("multi_frame", true).putInt("multi_frame_count", n).apply()
+                            cameraController?.multiFrameCount = n
+                        } else {
+                            prefs.edit().putBoolean("multi_frame", false).apply()
+                            cameraController?.multiFrameCount = 1
+                        }
                 }
             }
 
@@ -677,6 +699,10 @@ class MainActivity : AppCompatActivity() {
                         glSurfaceView.queueEvent { pipeline?.lutIntensity = value }
                     "color_temp" -> { colorTempKelvin = value.toInt(); updateColorTempGains() }
                     "color_tint" -> { colorTint = value.toInt(); updateColorTempGains() }
+                    // 拖动过程中即时同步控制器帧数，使下一次拍摄立刻生效（不落盘，松手时再持久化）
+                    "multi_frame" ->
+                        cameraController?.multiFrameCount =
+                            value.toInt().coerceIn(MULTI_FRAME_MIN, MULTI_FRAME_MAX)
                 }
             }
 
@@ -710,8 +736,12 @@ class MainActivity : AppCompatActivity() {
                         colorTint = value.toInt(); updateColorTempGains()
                         prefs.edit().putInt("color_tint", value.toInt()).apply()
                     }
-                    "multi_frame" ->
-                        prefs.edit().putInt("multi_frame_count", value.toInt()).apply()
+                    "multi_frame" -> {
+                        val n = value.toInt().coerceIn(MULTI_FRAME_MIN, MULTI_FRAME_MAX)
+                        prefs.edit().putInt("multi_frame_count", n).apply()
+                        // 关键：拍摄走控制器字段，必须同步，否则只有重启/重切开关才生效
+                        cameraController?.multiFrameCount = n
+                    }
                 }
             }
 
@@ -770,7 +800,7 @@ class MainActivity : AppCompatActivity() {
                 boolValue = prefs.getBoolean("save_dng", false)))
             add(SettingsItem("multi_frame", SettingsViewType.MULTIFRAME, "多帧降噪",
                 boolValue = prefs.getBoolean("multi_frame", false),
-                value = prefs.getInt("multi_frame_count", 4).toFloat()))
+                value = loadMultiFrameCount(prefs).toFloat()))
             add(SettingsItem("highlight_reconstruction", SettingsViewType.SWITCH, "高光重建",
                 prefsKey = "highlight_reconstruction", switchDefault = false,
                 boolValue = prefs.getBoolean("highlight_reconstruction", false)))
@@ -1276,7 +1306,7 @@ class MainActivity : AppCompatActivity() {
             }
             it.saveDng = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("save_dng", true)
             val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            it.multiFrameCount = if (prefs.getBoolean("multi_frame", false)) prefs.getInt("multi_frame_count", 4).coerceIn(2, 8) else 1
+            it.multiFrameCount = if (prefs.getBoolean("multi_frame", false)) loadMultiFrameCount(prefs) else 1
             // GPU JPEG 处理器：通过 queueEvent 在 GL 线程渲染，CountDownLatch 同步等待
             // 返回 null 则跳过 JPEG 保存
             it.gpuJpegProcessor = { rawShorts, w, h, blR, blG, blB, wl, wbR, wbG, wbB, ccm, cfa, zoom ->
