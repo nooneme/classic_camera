@@ -55,7 +55,7 @@ data class SettingsItem(
 val DEFAULT_SETTINGS_ORDER = listOf(
     "theme", "save_dng", "multi_frame", "highlight_reconstruction",
     "white_level_offset", "tone_map_d", "exposure_comp", "hl_comp", "hl_threshold",
-    "black_point", "shadow_comp", "contrast", "saturation", "auto_contrast",
+    "shadow_lift", "contrast", "saturation", "auto_contrast",
     "curve", "lut_intensity", "color_temp", "color_tint"
 )
 
@@ -67,7 +67,10 @@ object SettingsOrderStore {
     fun load(context: Context): List<String> {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val raw = prefs.getString(KEY, null) ?: return DEFAULT_SETTINGS_ORDER
-        val saved = raw.split(",").filter { it.isNotEmpty() }
+        // 旧版本两个滑块合并为一个：把它们的旧位置统一映射到新 id，保留用户原来的顺序位置。
+        val saved = raw.split(",").map {
+            if (it == "black_point" || it == "shadow_comp") "shadow_lift" else it
+        }.filter { it.isNotEmpty() }
         // 保序、去重、补漏：新加入的设置项追加到末尾。
         val seen = mutableSetOf<String>()
         val result = mutableListOf<String>()

@@ -243,8 +243,15 @@ class MainActivity : AppCompatActivity() {
             pipeline?.exposureComp = it.getFloat("exposure_comp", 0f)
             pipeline?.hlComp = it.getFloat("hl_comp", 0f)
             pipeline?.hlThreshold = it.getFloat("hl_threshold", 0f)
-            pipeline?.blackPoint = it.getFloat("black_point", 0f)
-            pipeline?.shadowComp = it.getFloat("shadow_comp", 50f)
+            // 新版本只存一个「暗部提亮」值；老配置仍按原值恢复，等用户拖动后再迁移
+            if (it.contains("shadow_lift")) {
+                val (bp, sc) = shadowLiftToParams(it.getFloat("shadow_lift", SHADOW_LIFT_DEFAULT))
+                pipeline?.blackPoint = bp
+                pipeline?.shadowComp = sc
+            } else {
+                pipeline?.blackPoint = it.getFloat("black_point", 0f)
+                pipeline?.shadowComp = it.getFloat("shadow_comp", 50f)
+            }
             pipeline?.contrast = it.getFloat("contrast", 0f)
             pipeline?.saturation = 1f + it.getFloat("saturation", 50f) / 100f
             pipeline?.autoContrast = it.getBoolean("auto_contrast", true)
@@ -622,6 +629,35 @@ class MainActivity : AppCompatActivity() {
     private val MULTI_FRAME_MIN = 2
     private val MULTI_FRAME_MAX = 8
 
+    /** 暗部提亮滑块范围：0..200，默认 100 对应旧的黑点 0 / 阴影压缩 50。 */
+    private val SHADOW_LIFT_DEFAULT = 100f
+    private val SHADOW_LIFT_MAX = 200f
+
+    /**
+     * 暗部提亮 → 旧的（黑点, 阴影压缩），以默认位置为界分段线性：
+     *   0   → (+200, 0)    最暗（旧黑点最右 + 阴影压缩最左）
+     *   100 → (0, 50)      旧默认
+     *   200 → (-200, 200)  最亮（旧黑点最左 + 阴影压缩最右）
+     * 黑点全程一条直线，阴影压缩在默认处换斜率，两段均无非法值。
+     */
+    private fun shadowLiftToParams(lift: Float): Pair<Float, Float> {
+        val s = lift.coerceIn(0f, SHADOW_LIFT_MAX)
+        val blackPoint = 200f - 2f * s
+        val shadowComp = if (s <= SHADOW_LIFT_DEFAULT) 0.5f * s else 1.5f * s - 100f
+        return blackPoint to shadowComp
+    }
+
+    /** 旧偏好值 → 新滑块位置（仅在新 key 不存在时用于迁移），两路反推取平均。 */
+    private fun loadShadowLift(prefs: SharedPreferences): Float {
+        val saved = prefs.getFloat("shadow_lift", -1f)
+        if (saved >= 0f) return saved.coerceIn(0f, SHADOW_LIFT_MAX)
+        val bp = prefs.getFloat("black_point", 0f)
+        val sc = prefs.getFloat("shadow_comp", 50f)
+        val fromBp = (200f - bp) / 2f
+        val fromSc = if (sc <= 50f) 2f * sc else (sc + 100f) / 1.5f
+        return ((fromBp + fromSc) / 2f).coerceIn(0f, SHADOW_LIFT_MAX)
+    }
+
     /**
      * 读取已持久化的多帧帧数。
      * 历史版本在关闭开关时会把 1 写进 "multi_frame_count"，此处对非法值回退到默认值 4，
@@ -687,10 +723,13 @@ class MainActivity : AppCompatActivity() {
                         glSurfaceView.queueEvent { pipeline?.hlComp = value }
                     "hl_threshold" ->
                         glSurfaceView.queueEvent { pipeline?.hlThreshold = value }
-                    "black_point" ->
-                        glSurfaceView.queueEvent { pipeline?.blackPoint = value }
-                    "shadow_comp" ->
-                        glSurfaceView.queueEvent { pipeline?.shadowComp = value }
+                    "shadow_lift" -> {
+                        val (bp, sc) = shadowLiftToParams(value)
+                        glSurfaceView.queueEvent {
+                            pipeline?.blackPoint = bp
+                            pipeline?.shadowComp = sc
+                        }
+                    }
                     "contrast" ->
                         glSurfaceView.queueEvent { pipeline?.contrast = value }
                     "saturation" ->
@@ -718,10 +757,15 @@ class MainActivity : AppCompatActivity() {
                         prefs.edit().putFloat("hl_comp", value).apply()
                     "hl_threshold" ->
                         prefs.edit().putFloat("hl_threshold", value).apply()
-                    "black_point" ->
-                        prefs.edit().putFloat("black_point", value).apply()
-                    "shadow_comp" ->
-                        prefs.edit().putFloat("shadow_comp", value).apply()
+                    "shadow_lift" -> {
+                        val (bp, sc) = shadowLiftToParams(value)
+                        // 同时保留旧键，便于其它路径/旧版本读取
+                        prefs.edit()
+                            .putFloat("shadow_lift", value)
+                            .putFloat("black_point", bp)
+                            .putFloat("shadow_comp", sc)
+                            .apply()
+                    }
                     "contrast" ->
                         prefs.edit().putFloat("contrast", value).apply()
                     "saturation" ->
@@ -828,15 +872,10 @@ class MainActivity : AppCompatActivity() {
                 sliderMax = 100f, sliderStep = 1f,
                 formatValue = { it.toInt().toString() },
                 value = prefs.getFloat("hl_threshold", 0f)))
-            add(SettingsItem("black_point", SettingsViewType.SLIDER, "黑点",
-                sliderMax = 400f, sliderStep = 1f,
-                valueToSlider = { it + 200f }, sliderToValue = { it - 200f },
+            add(SettingsItem("shadow_lift", SettingsViewType.SLIDER, "暗部提亮",
+                sliderMax = SHADOW_LIFT_MAX, sliderStep = 1f,
                 formatValue = { it.toInt().toString() },
-                value = prefs.getFloat("black_point", 0f)))
-            add(SettingsItem("shadow_comp", SettingsViewType.SLIDER, "阴影压缩",
-                sliderMax = 200f, sliderStep = 1f,
-                formatValue = { it.toInt().toString() },
-                value = prefs.getFloat("shadow_comp", 50f)))
+                value = loadShadowLift(prefs)))
             add(SettingsItem("contrast", SettingsViewType.SLIDER, "对比度",
                 sliderMax = 200f, sliderStep = 1f,
                 valueToSlider = { it + 100f }, sliderToValue = { it - 100f },
@@ -896,8 +935,7 @@ class MainActivity : AppCompatActivity() {
             "exposure_comp" to SettingsItem("exposure_comp", SettingsViewType.SLIDER, "", value = 0f),
             "hl_comp" to SettingsItem("hl_comp", SettingsViewType.SLIDER, "", value = 0f),
             "hl_threshold" to SettingsItem("hl_threshold", SettingsViewType.SLIDER, "", value = 0f),
-            "black_point" to SettingsItem("black_point", SettingsViewType.SLIDER, "", value = 0f),
-            "shadow_comp" to SettingsItem("shadow_comp", SettingsViewType.SLIDER, "", value = 50f),
+            "shadow_lift" to SettingsItem("shadow_lift", SettingsViewType.SLIDER, "", value = SHADOW_LIFT_DEFAULT),
             "contrast" to SettingsItem("contrast", SettingsViewType.SLIDER, "", value = 0f),
             "saturation" to SettingsItem("saturation", SettingsViewType.SLIDER, "", value = 50f),
             "auto_contrast" to SettingsItem("auto_contrast", SettingsViewType.SWITCH, "", boolValue = true),
@@ -924,6 +962,7 @@ class MainActivity : AppCompatActivity() {
             .putFloat("exposure_comp", 0f)
             .putFloat("hl_comp", 0f)
             .putFloat("hl_threshold", 0f)
+            .putFloat("shadow_lift", SHADOW_LIFT_DEFAULT)
             .putFloat("black_point", 0f)
             .putFloat("shadow_comp", 50f)
             .putFloat("contrast", 0f)
